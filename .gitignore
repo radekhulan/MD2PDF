@@ -1,0 +1,23 @@
+# PHP deps (mPDF) — obnov přes `composer install`
+vendor/
+
+# Node deps (mermaid-cli + Chromium) — obnov přes `npm install`
+node_modules/
+package-lock.json
+
+# Prohlížeč stažený puppeteerem (volitelné; lze i systémový Chrome/Edge)
+.puppeteer/
+
+# Mermaid render cache
+.mermaid-cache/
+pdf/_preview
+
+# Editor / nástroje
+.source/
+.vscode/
+.claude/
+
+# Lokální / dočasné
+*.tmp
+COMMIT_MSG.tmp
+publish.cmd

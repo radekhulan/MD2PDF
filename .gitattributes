@@ -1,0 +1,15 @@
+# Konzistentní konce řádků napříč OS (autor je na Windows)
+* text=auto eol=lf
+
+# Windows skripty musí zůstat CRLF
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+# Shell skripty striktně LF (jinak se rozbije shebang na Linuxu)
+*.sh text eol=lf
+
+# Binární soubory (žádná normalizace konců řádků)
+*.ttf binary
+*.png binary
+*.jpg binary
+*.pdf binary

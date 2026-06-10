@@ -1,0 +1,12 @@
+{
+    "name": "md2pdf/md2pdf",
+    "description": "Markdown -> PDF export pipeline for project documents (mPDF based).",
+    "require": {
+        "php": ">=8.1",
+        "mpdf/mpdf": "^8.2"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "platform-check": false
+    }
+}

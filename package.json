@@ -1,0 +1,10 @@
+{
+  "name": "md2pdf",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Markdown -> PDF export engine (mPDF) with mermaid diagram rendering",
+  "license": "MIT",
+  "dependencies": {
+    "@mermaid-js/mermaid-cli": "^11.4.2"
+  }
+}
