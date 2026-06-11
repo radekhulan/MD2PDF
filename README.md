@@ -1,6 +1,6 @@
 # MD2PDF
 
-> Markdown → profesionálně vysázené PDF. Vlastní řádkový Markdown parser + [mPDF](https://mpdf.github.io/), titulní strana, obsah, hlavička/patička, callouty, tabulky, auto-fit ASCII diagramů a **render `mermaid` diagramů**. Vše projektově specifické (cesty, výběr souborů, identita, překlad, logo) žije v jednom `md2pdf.config.php` — engine se nemění.
+> Markdown → profesionálně vysázené PDF. Vlastní řádkový Markdown parser + **dva renderery**: [mPDF](https://mpdf.github.io/) (default, čistě PHP) nebo headless **Chrome + GhostScript** (vektorový mermaid). Titulní strana, obsah, hlavička/patička, callouty, tabulky, auto-fit ASCII diagramů a **render `mermaid` diagramů**. Vše projektově specifické (cesty, výběr souborů, identita, překlad, logo) žije v jednom `md2pdf.config.php` — engine se nemění.
 
 🇨🇿 **Čeština** (níže) · 🇬🇧 [English](#-md2pdf-english)
 
@@ -18,13 +18,14 @@
 
 ## Vlastnosti
 
-- **Vlastní Markdown parser** (nadpisy, seznamy vč. vnořených a checkboxů, tabulky GFM, blockquote/callouty, kód, obrázky, odkazy, HR, inline `**bold**`/`*italic*`/`code`).
-- **Titulní strana** s brandingem — titul z `# H1`, podtitul/účel a metadata (verze, datum, autor) z úvodního blockquote, logo dole.
+- **Dva renderery** — `mpdf` (default, čistě PHP, bez závislostí) nebo `chrome` (vektorový mermaid přes headless Chrome + GhostScript); přepíná se v configu, výstup je vizuálně sjednocený.
+- **Vlastní Markdown parser** (nadpisy, seznamy vč. vnořených a checkboxů, GFM tabulky se zarovnáním a zalomením buněk, blockquote/callouty, kód, obrázky, HR, **poznámky pod čarou `[^1]`**, odkazy vč. interních kotev a **autolinků `<url>`**, inline `**bold**`/`*italic*`/`~~strike~~`/`code` a **escapování `\*`**).
+- **Titulní strana** s brandingem — titul z `# H1`, podtitul/účel a metadata (verze, datum, autor) z úvodního blockquote, logo dole; **full-bleed** pozadí bez hlavičky/patičky.
 - **Obsah (TOC)** automaticky z `##` nadpisů (když jsou aspoň 4).
-- **Hlavička a patička** na každé stránce; texty plně z configu (lokalizace).
+- **Hlavička a patička** + čísla stran v těle (titulka nečíslovaná); texty plně z configu (lokalizace).
 - **Callout boxy** z blockquote; „varovné" (oranžové) podle klíčových slov.
-- **Mermaid diagramy** — `mermaid` bloky se vyrenderují do PNG přes [mermaid-cli](https://github.com/mermaid-js/mermaid-cli) a vloží jako obrázek.
-- **Auto-fit** širokých code-bloků (ASCII diagramy) a tabulek, ať se vejdou na šířku.
+- **Mermaid diagramy** — renderer `chrome` vkládá ostré **vektorové SVG**, renderer `mpdf` PNG přes [mermaid-cli](https://github.com/mermaid-js/mermaid-cli).
+- **Auto-fit** širokých code-bloků (ASCII diagramy) a tabulek; dlouhé tokeny (DNS/base64) se zalomí.
 - **Embedované volné fonty** (Source Sans 3 + Cascadia Mono + DejaVu záloha) → PDF vypadá všude stejně a je legálně přenositelné.
 - **Stránkové zlomy** — každá `# H1` i `## H2` kapitola začíná na nové straně.
 
@@ -32,13 +33,22 @@
 
 | Nástroj | Verze | K čemu |
 |--------|-------|--------|
-| PHP | 8.0+ (CLI, s `mbstring`) | běh enginu |
+| PHP | 8.0+ (CLI, s `mbstring`) | běh enginu (oba renderery) |
 | Composer | — | instalace mPDF |
-| Node.js + npm | 18+ | mermaid-cli (jen pro mermaid) |
-| Chrome / Edge | jakýkoli Chromium | render mermaidu (jen pro mermaid) |
-| GhostScript | — | volitelně PNG náhledy |
+| Node.js + npm | 18+ | renderer `chrome` (puppeteer) a/nebo mermaid — **volitelné** |
+| Chrome / Edge | jakýkoli Chromium | renderer `chrome` a render mermaidu — **volitelné** |
+| GhostScript | — | renderer `chrome` (spojení + optimalizace); jinak volitelně náhledy |
 
-Mermaid je **volitelný**: bez Node/prohlížeče se `mermaid` bloky vysází jako kód a vše ostatní funguje.
+Default renderer `mpdf` běží **jen s PHP + Composer**. Node/Chrome/GhostScript jsou potřeba jen pro renderer `chrome`; bez nich se použije `mpdf` a `mermaid` bloky se vysází jako PNG (mermaid-cli), případně jako kód.
+
+## Renderer
+
+Engine umí **dva renderery** (přepínač `renderer` v configu):
+
+- **`mpdf`** (default) — čistě PHP přes [mPDF](https://mpdf.github.io/), bez Node/Chrome. Menší soubory. Mermaid jako PNG (mermaid-cli, volitelně).
+- **`chrome`** — sazba přes headless Chrome + GhostScript: **vektorový mermaid (SVG)**, downsample obrázků. Vyžaduje Node (puppeteer), Chrome/Edge a GhostScript; když Chrome chybí, spadne automaticky zpět na `mpdf`.
+
+Titulní strana je u obou **stejná** (full-bleed pozadí, bez hlavičky/patičky/čísla; běžící hlavička/patička + čísla stran jen v těle). Nastavení chrome rendereru (`chrome.image_dpi`, `chrome.margins`, cesty k `exe`/`gs`) viz [`md2pdf.config.sample.php`](md2pdf.config.sample.php).
 
 ## Instalace
 
@@ -113,6 +123,8 @@ Config je PHP soubor vracející pole. Plně okomentovaný vzor je [`md2pdf.conf
 | `source_meta_labels` | labely metabloku v `.md` (`Verze`/`Datum`/`Autor`/`Účel`) |
 | `lead_blockquote` | `'meta'` (úvodní blockquote = metadata) / `'keep'` (= obsah) |
 | `warn_keywords` | klíčová slova pro „varovný" callout |
+| `renderer` | `'mpdf'` (default) nebo `'chrome'` (vektorový mermaid) |
+| `chrome` | nastavení chrome rendereru (`exe`, `gs`, `image_dpi`, `margins`) |
 | `mermaid` | render mermaidu (viz níže) |
 
 ## Konvence Markdownu
@@ -168,7 +180,7 @@ Radek Hulán — [https://mywebdesign.cz/](https://mywebdesign.cz/)
 
 # 🇬🇧 MD2PDF (English)
 
-> Markdown → professionally typeset PDF. Custom line-based Markdown parser + [mPDF](https://mpdf.github.io/), cover page, table of contents, header/footer, callouts, tables, ASCII-diagram auto-fit and **`mermaid` diagram rendering**. Everything project-specific (paths, file selection, identity, translation, logo) lives in a single `md2pdf.config.php` — the engine never changes.
+> Markdown → professionally typeset PDF. Custom line-based Markdown parser + **two renderers**: [mPDF](https://mpdf.github.io/) (default, pure PHP) or headless **Chrome + GhostScript** (vector mermaid). Cover page, table of contents, header/footer, callouts, tables, ASCII-diagram auto-fit and **`mermaid` diagram rendering**. Everything project-specific (paths, file selection, identity, translation, logo) lives in a single `md2pdf.config.php` — the engine never changes.
 
 ## What it is
 
@@ -176,13 +188,14 @@ Radek Hulán — [https://mywebdesign.cz/](https://mywebdesign.cz/)
 
 ## Features
 
-- **Custom Markdown parser** (headings, lists incl. nested & checkboxes, GFM tables, blockquotes/callouts, code, images, links, HR, inline `**bold**`/`*italic*`/`code`).
-- **Cover page** with branding — title from `# H1`, subtitle/purpose and metadata (version, date, author) from the leading blockquote, logo at the bottom.
+- **Two renderers** — `mpdf` (default, pure PHP, no deps) or `chrome` (vector mermaid via headless Chrome + GhostScript); switched in the config, visually unified output.
+- **Custom Markdown parser** (headings, lists incl. nested & checkboxes, GFM tables with alignment & cell wrapping, blockquotes/callouts, code, images, HR, **footnotes `[^1]`**, links incl. internal anchors and **autolinks `<url>`**, inline `**bold**`/`*italic*`/`~~strike~~`/`code` and **escaping `\*`**).
+- **Cover page** with branding — title from `# H1`, subtitle/purpose and metadata (version, date, author) from the leading blockquote, logo at the bottom; **full-bleed** background, no header/footer.
 - **Table of contents** auto-generated from `##` headings (when there are at least 4).
-- **Header & footer** on every page; all text comes from the config (localization).
+- **Header & footer** + page numbers in the body (cover unnumbered); all text comes from the config (localization).
 - **Callout boxes** from blockquotes; "warning" (orange) by keyword match.
-- **Mermaid diagrams** — `mermaid` blocks are rendered to PNG via [mermaid-cli](https://github.com/mermaid-js/mermaid-cli) and embedded as images.
-- **Auto-fit** of wide code blocks (ASCII diagrams) and tables to page width.
+- **Mermaid diagrams** — the `chrome` renderer embeds crisp **vector SVG**, the `mpdf` renderer PNG via [mermaid-cli](https://github.com/mermaid-js/mermaid-cli).
+- **Auto-fit** of wide code blocks (ASCII diagrams) and tables; long tokens (DNS/base64) wrap.
 - **Embedded free fonts** (Source Sans 3 + Cascadia Mono + DejaVu fallback) → PDF looks the same everywhere and is legally redistributable.
 - **Page breaks** — every `# H1` and `## H2` chapter starts on a new page.
 
@@ -190,13 +203,22 @@ Radek Hulán — [https://mywebdesign.cz/](https://mywebdesign.cz/)
 
 | Tool | Version | For |
 |------|---------|-----|
-| PHP | 8.0+ (CLI, with `mbstring`) | running the engine |
+| PHP | 8.0+ (CLI, with `mbstring`) | running the engine (both renderers) |
 | Composer | — | installing mPDF |
-| Node.js + npm | 18+ | mermaid-cli (mermaid only) |
-| Chrome / Edge | any Chromium | mermaid rendering (mermaid only) |
-| GhostScript | — | optional PNG previews |
+| Node.js + npm | 18+ | `chrome` renderer (puppeteer) and/or mermaid — **optional** |
+| Chrome / Edge | any Chromium | `chrome` renderer and mermaid rendering — **optional** |
+| GhostScript | — | `chrome` renderer (merge + optimize); otherwise optional previews |
 
-Mermaid is **optional**: without Node/a browser, `mermaid` blocks are typeset as code and everything else still works.
+The default `mpdf` renderer runs **with PHP + Composer only**. Node/Chrome/GhostScript are needed only for the `chrome` renderer; without them the engine uses `mpdf` and `mermaid` blocks are typeset as PNG (mermaid-cli) or as code.
+
+## Renderer
+
+The engine has **two renderers** (the `renderer` switch in the config):
+
+- **`mpdf`** (default) — pure PHP via [mPDF](https://mpdf.github.io/), no Node/Chrome. Smaller files. Mermaid as PNG (mermaid-cli, optional).
+- **`chrome`** — typeset via headless Chrome + GhostScript: **vector mermaid (SVG)**, image downsampling. Requires Node (puppeteer), Chrome/Edge and GhostScript; if Chrome is missing it falls back to `mpdf`.
+
+The cover page is **identical** for both (full-bleed background, no header/footer/page-number; running header/footer + page numbers only in the body). Chrome renderer settings (`chrome.image_dpi`, `chrome.margins`, paths to `exe`/`gs`) — see [`md2pdf.config.sample.php`](md2pdf.config.sample.php).
 
 ## Install
 
@@ -271,6 +293,8 @@ The config is a PHP file returning an array. A fully commented template is [`md2
 | `source_meta_labels` | meta-block labels in `.md` (`Verze`/`Datum`/`Autor`/`Účel`) |
 | `lead_blockquote` | `'meta'` (leading blockquote = metadata) / `'keep'` (= content) |
 | `warn_keywords` | keywords that mark a "warning" callout |
+| `renderer` | `'mpdf'` (default) or `'chrome'` (vector mermaid) |
+| `chrome` | chrome renderer settings (`exe`, `gs`, `image_dpi`, `margins`) |
 | `mermaid` | mermaid rendering (see below) |
 
 ## Markdown conventions

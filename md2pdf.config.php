@@ -23,6 +23,23 @@ return [
     // README plyne souvisle, nezalamovat každou kapitolu na novou stránku
     'chapter_page_break' => false,
 
+    // --- Renderer ---------------------------------------------------------
+    // 'mpdf' (DEFAULT) = čistě PHP (mPDF), bez externích závislostí; mermaid
+    //     jako PNG. Menší soubory, žádný Node/Chrome.
+    // 'chrome' = sazba přes headless Chrome + GhostScript: vektorový mermaid
+    //     (SVG, ostré), header/footer + čísla v těle. Vyžaduje Node (puppeteer
+    //     — `npm install`), Chrome/Edge a GhostScript; když Chrome chybí, spadne
+    //     zpět na 'mpdf'. Titulní strana je u OBOU stejná (full-bleed, bez furniture).
+    'renderer' => 'mpdf',
+
+    // Nastavení chrome rendereru (uplatní se jen pro 'renderer' => 'chrome').
+    'chrome' => [
+        'exe'       => null,   // cesta k Chrome/Edge; null = autodetekce / env MD2PDF_CHROME
+        'gs'        => null,   // cesta ke GhostScriptu (gswin64c.exe); null = autodetekce
+        'image_dpi' => 200,    // downsample rastrových obrázků na N dpi (300 = bez downsamplu)
+        'margins'   => ['top' => '22mm', 'bottom' => '16mm', 'left' => '18mm', 'right' => '18mm'],
+    ],
+
     // --- Identita / branding ---------------------------------------------
     'author'      => 'Radek Hulán',
     'company'     => 'MyWebdesign.cz s.r.o.',
