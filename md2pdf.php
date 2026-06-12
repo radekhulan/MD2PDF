@@ -140,8 +140,22 @@ function mdInline(string $s): string
     $s = preg_replace_callback('/\[([^\]]+)\]\(([^)]+)\)/', function ($m) {
         $text = $m[1];
         $href = trim($m[2]);
-        // .md interní odkazy → jen text (žádné rozbité odkazy v PDF)
+        // .md interní odkazy → jen text (žádné rozbité odkazy v PDF).
+        // COMBINE režim (více .md → jeden PDF): cross-chapter .md odkaz se přepíše
+        // na KLIKACÍ interní kotvu (#slug prvního H1 cílové kapitoly, případně
+        // #slug uvedené sekce). Mimo combine (globální mapa není) zůstává původní
+        // chování beze změny → 100% zpětná kompatibilita.
         if (preg_match('~\.md(#.*)?$~i', $href)) {
+            $cmb = $GLOBALS['MD2PDF_COMBINE'] ?? null;
+            if ($cmb && preg_match('~^([^#]+)\.md(?:#(.+))?$~i', $href, $hm)) {
+                if (isset($hm[2]) && $hm[2] !== '') {
+                    return '<a href="#' . mdSlug($hm[2]) . '">' . $text . '</a>';
+                }
+                $b = strtolower(pathinfo($hm[1], PATHINFO_FILENAME));
+                if (!empty($cmb['bases'][$b])) {
+                    return '<a href="#' . $cmb['bases'][$b] . '">' . $text . '</a>';
+                }
+            }
             return '<span class="xref">' . $text . '</span>';
         }
         if (preg_match('~^https?://~i', $href)) {
@@ -261,6 +275,12 @@ function mdToHtml(string $md): array
     $firstH1Done    = false;
     $firstH2Done    = false;
     $chapterBreak   = $CFG['chapter_page_break'] ?? true;  // zlom před každou kapitolou (H1/H2)
+    // H2 zlom lze řídit odděleně (combine režim: H1 = kapitola se zlomem, H2 =
+    // sekce uvnitř BEZ zlomu). Když není zadán, dědí z chapter_page_break →
+    // beze změny pro stávající jednodokumentové configy.
+    $h2Break        = $CFG['h2_page_break'] ?? $chapterBreak;
+    // Které úrovně nadpisů jdou do TOC (default H2+H3 = stávající chování).
+    $tocLevels      = $CFG['toc_levels'] ?? [2, 3];
 
     // ---- flush helpery -------------------------------------------------
     $flushPara = function () use (&$paragraph, &$html) {
@@ -450,7 +470,7 @@ function mdToHtml(string $md): array
             // s úvodním metablokem). mPDF break neaplikuje, je-li už na začátku stránky,
             // takže nevznikají prázdné stránky ani po H1 zlomu.
             if ($level === 2) {
-                if ($firstH2Done && $chapterBreak) { $cls = ' class="pb"'; }
+                if ($firstH2Done && $h2Break) { $cls = ' class="pb"'; }
                 $firstH2Done = true;
             }
             $headingCounter++;
@@ -459,7 +479,7 @@ function mdToHtml(string $md): array
             // resolvuje přes name, ne přes id (Chrome bere obojí).
             $anchor = $id !== '' ? '<a name="' . $id . '"></a>' : '';
             $html  .= "<h{$level}{$idAttr}{$cls}>{$anchor}{$text}</h{$level}>\n";
-            if ($level === 2 || $level === 3) {
+            if (in_array($level, $tocLevels, true)) {
                 $toc[] = ['level' => $level, 'text' => $raw, 'slug' => $id];
             }
             continue;
@@ -562,6 +582,16 @@ function applyGlyphSubstitutions(string $html): string
         // varovné/info štítky (kdyby se vyskytly mimo callout)
         "\u{1F4A1}" => '<strong class="lbl">' . $tip . '</strong>',   // 💡
         "\u{2139}"  => '<strong class="lbl">' . $note . '</strong>',  // ℹ
+        // barevné stavové puntíky (legendy stavů) — emoji plane, font je nemá;
+        // přepiš na barevné ● / ○ (ty font má a jsou v keep-listu níže)
+        "\u{1F7E2}" => '<span class="g-dot g-dot-green">&#9679;</span>',  // 🟢
+        "\u{1F7E1}" => '<span class="g-dot g-dot-amber">&#9679;</span>',  // 🟡
+        "\u{1F7E0}" => '<span class="g-dot g-dot-amber">&#9679;</span>',  // 🟠
+        "\u{1F534}" => '<span class="g-dot g-dot-red">&#9679;</span>',    // 🔴
+        "\u{1F535}" => '<span class="g-dot g-dot-blue">&#9679;</span>',   // 🔵
+        "\u{26AB}"  => '<span class="g-dot">&#9679;</span>',              // ⚫
+        "\u{26AA}"  => '<span class="g-dot g-dot-gray">&#9675;</span>',   // ⚪
+        "\u{1F4E5}" => '&#8595;',                                          // 📥 → ↓
     ];
     $html = strtr($html, $map);
 
@@ -846,6 +876,14 @@ pre.code-block code {
 .g-ph2 { color: #e08e0b; }
 .g-ph3 { color: #2f7fc9; }
 .lbl   { color: #5b21b6; }
+
+/* Barevné stavové puntíky (🟢🟡🔴⚪…) */
+.g-dot { font-size: 0.9em; line-height: 1; }
+.g-dot-green { color: #16a34a; }
+.g-dot-amber { color: #d97706; }
+.g-dot-red   { color: #dc2626; }
+.g-dot-blue  { color: #2563eb; }
+.g-dot-gray  { color: #9ca3af; }
 
 /* ---------- Poznámky pod čarou ---------- */
 hr.fn-sep { border: none; border-top: 0.6pt solid #d1d5db; margin: 7mm 0 3mm 0; }
@@ -1629,6 +1667,540 @@ HTML;
     ];
 }
 
+// =====================================================================
+//  COMBINE režim — VÍCE .md → JEDEN PDF
+//  ---------------------------------------------------------------------
+//  Aktivuje se klíčem `combine.enabled => true` v configu. Sloučí všechny
+//  zdrojové .md (v pořadí dle volitelného `combine.index` souboru, jinak dle
+//  glob/abecedy) do JEDNOHO dokumentu: jedna titulní strana (z configu),
+//  jeden průběžný obsah (H1 kapitoly + H2 sekce), stránkový zlom před každou
+//  kapitolou (H1), cross-chapter `.md` odkazy jako klikací interní kotvy.
+//
+//  Mimo combine (klíč nezadán) se NIC z tohoto nevolá → engine se chová přesně
+//  jako dřív (jeden PDF na soubor).
+// =====================================================================
+
+// Pořadí kapitol z index souboru (### skupiny + číslované [název](NN_Name.md)).
+// Vrací seznam basenames v požadovaném pořadí; soubory mimo index se doplní
+// volajícím na konec.
+function combineParseIndexOrder(string $indexPath): array
+{
+    $order = [];
+    if (!is_file($indexPath)) { return $order; }
+    foreach (file($indexPath) as $line) {
+        $t = trim($line);
+        if (preg_match('/^\d+[a-z]?[.)]\s+\[[^\]]+\]\(([^)]+\.md)\)/u', $t, $m)
+            || preg_match('/^[-*]\s+\[[^\]]+\]\(([^)]+\.md)\)/u', $t, $m)) {
+            $order[] = pathinfo($m[1], PATHINFO_FILENAME);
+        }
+    }
+    return $order;
+}
+
+// Seřaď soubory dle indexu; soubory mimo index připoj na konec (abecedně).
+function combineOrderFiles(array $files): array
+{
+    global $CFG, $SRC_DIR;
+    $indexName = $CFG['combine']['index'] ?? null;
+    $byBase = [];
+    foreach ($files as $f) { $byBase[pathinfo($f, PATHINFO_FILENAME)] = $f; }
+
+    if (!$indexName) {
+        ksort($byBase, SORT_STRING);
+        return array_values($byBase);
+    }
+
+    $indexPath = $SRC_DIR . DIRECTORY_SEPARATOR . $indexName;
+    $ordered = [];
+    foreach (combineParseIndexOrder($indexPath) as $base) {
+        if (isset($byBase[$base])) { $ordered[] = $byBase[$base]; unset($byBase[$base]); }
+    }
+    // zbytek (mimo index) na konec, abecedně
+    ksort($byBase, SORT_STRING);
+    foreach ($byBase as $f) { $ordered[] = $f; }
+    return $ordered;
+}
+
+// Sestav tělo sloučeného dokumentu (mapa cross-chapter kotev, spojení, footnotes,
+// mermaid dle rendereru). Vrací ['html','toc','maxCodeWidth'].
+function buildCombinedBody(array $files, string $renderer): array
+{
+    global $CFG;
+
+    // 1) mapa base → slug prvního H1 (cíl cross-chapter odkazů)
+    $bases = [];
+    foreach ($files as $f) {
+        $md = str_replace("\xEF\xBB\xBF", '', (string) file_get_contents($f));
+        $h1 = null;
+        foreach (preg_split('/\r\n|\r|\n/', $md) as $ln) {
+            if (preg_match('/^#\s+(.*)$/', trim($ln), $mm)) { $h1 = trim($mm[1]); break; }
+        }
+        $bases[strtolower(pathinfo($f, PATHINFO_FILENAME))] = $h1 !== null ? mdSlug($h1) : '';
+    }
+    $GLOBALS['MD2PDF_COMBINE'] = ['bases' => $bases];
+
+    // 2) spoj surová těla (H1 zůstává → kapitolový nadpis + zlom)
+    $combined = '';
+    foreach ($files as $f) {
+        $md = str_replace("\xEF\xBB\xBF", '', (string) file_get_contents($f));
+        $combined .= rtrim($md) . "\n\n";
+    }
+
+    // 3) poznámky pod čarou přes CELÝ dokument (globální číslování)
+    $fn = preprocessFootnotes($combined);
+    $GLOBALS['FN_ORDER'] = $fn['order'];
+
+    if ($renderer === 'chrome') {
+        // mermaid → vektorové SVG (inline)
+        $svgStore = [];
+        $body = $fn['body'];
+        if (($CFG['mermaid']['enabled'] ?? true) !== false && strpos($body, 'mermaid') !== false) {
+            $mmdc = locateMmdc();
+            if ($mmdc) {
+                $body = preg_replace_callback(
+                    '/^[ \t]*`{3,}[ \t]*mermaid[ \t]*\r?\n(.*?)\r?\n[ \t]*`{3,}[ \t]*$/ms',
+                    function ($m) use (&$svgStore, $mmdc) {
+                        $svg = renderMermaidToSvg($m[1], $mmdc);
+                        if ($svg === null) { return $m[0]; }
+                        $i = count($svgStore); $svgStore[$i] = $svg;
+                        return '![](mermaidsvg:' . $i . ')';
+                    },
+                    $body
+                );
+            }
+        }
+        $parsed   = mdToHtml($body);
+        $bodyHtml = applyGlyphSubstitutions($parsed['html']);
+        $bodyHtml = preg_replace_callback('/<img\s+src="mermaidsvg:(\d+)"[^>]*>/i',
+            function ($m) use ($svgStore) {
+                $i = (int) $m[1];
+                return isset($svgStore[$i]) ? responsiveSvg(file_get_contents($svgStore[$i])) : '';
+            }, $bodyHtml);
+    } else {
+        $body     = preprocessMermaid($fn['body']);  // mermaid → PNG
+        $parsed   = mdToHtml($body);
+        $bodyHtml = applyGlyphSubstitutions($parsed['html']);
+    }
+
+    $bodyHtml = str_replace('<!--/fig-->', '', $bodyHtml);
+    $bodyHtml = preg_replace('~<hr\s*/?>\s*(?=<h[12]\b)~', '', $bodyHtml);
+    $bodyHtml = preg_replace('~<hr\s*/?>\s*$~', '', $bodyHtml);
+    $bodyHtml .= renderFootnotesHtml($fn['order'], $fn['defs']);
+
+    return ['html' => $bodyHtml, 'toc' => $parsed['toc'], 'maxCodeWidth' => $parsed['maxCodeWidth']];
+}
+
+// Titulní blok pro combine (eyebrow/titul/podtitul/meta řádky z configu).
+function combineCoverParts(): array
+{
+    global $CFG, $AUTHOR, $COMPANY, $BRAND;
+    $C        = $CFG['combine'] ?? [];
+    $title    = htmlspecialchars((string) ($C['title'] ?? ($CFG['strings']['default_title'] ?? 'Dokument')), ENT_QUOTES, 'UTF-8');
+    $subtitle = (string) ($C['subtitle'] ?? '');
+    $purpose  = $subtitle !== ''
+        ? '<div class="cover-purpose">' . applyGlyphSubstitutions(mdInline($subtitle)) . '</div>'
+        : '';
+
+    $dkRaw   = (string) ($CFG['doc_kind'] ?? '');
+    $dk      = htmlspecialchars($dkRaw, ENT_QUOTES, 'UTF-8');
+    $eyebrow = $BRAND !== ''
+        ? ($dk !== '' ? $dk . ' &#183; ' : '') . htmlspecialchars($BRAND, ENT_QUOTES, 'UTF-8')
+        : $dk;
+
+    $today = date($CFG['date_format'] ?? 'j. n. Y');
+    // Vlastní řádky: combine.meta_rows = [[label, valueHtml], …] (value smí
+    // obsahovat HTML/odkazy; token {date} se nahradí datem). Jinak default.
+    $rows = $C['meta_rows'] ?? null;
+    if ($rows === null) {
+        $MS   = $CFG['strings']['meta'] ?? [];
+        $rows = [];
+        if ($AUTHOR !== '')  { $rows[] = [$MS['author'] ?? 'Autor', htmlspecialchars($AUTHOR, ENT_QUOTES, 'UTF-8')]; }
+        if ($COMPANY !== '') { $rows[] = [$MS['company'] ?? 'Společnost', htmlspecialchars($COMPANY, ENT_QUOTES, 'UTF-8')]; }
+        $rows[] = [$MS['generated'] ?? 'Vygenerováno', $today];
+    } else {
+        foreach ($rows as &$r) { $r[1] = str_replace('{date}', $today, (string) $r[1]); }
+        unset($r);
+    }
+    $metaRows = '';
+    $last     = count($rows) - 1;
+    foreach ($rows as $i => $r) {
+        $cls = $i === $last ? ' class="last"' : '';
+        $metaRows .= '<tr' . $cls . '><td class="cover-meta-label">'
+                  . htmlspecialchars((string) $r[0], ENT_QUOTES, 'UTF-8') . '</td>'
+                  . '<td class="cover-meta-value">' . $r[1] . '</td></tr>';
+    }
+    return ['eyebrow' => $eyebrow, 'title' => $title, 'purpose' => $purpose, 'metaRows' => $metaRows];
+}
+
+// Průběžný obsah pro combine (H1 kapitoly tučně, H2 sekce odsazené).
+function combineTocHtml(array $toc): string
+{
+    global $CFG;
+    if (!$toc) { return ''; }
+    $tocTitle = htmlspecialchars($CFG['strings']['toc_title'] ?? 'Obsah', ENT_QUOTES, 'UTF-8');
+    $h = '<div class="toc"><div class="toc-title">' . $tocTitle . '</div>' . "\n";
+    foreach ($toc as $t) {
+        $txt = applyGlyphSubstitutions(mdInline($t['text']));
+        $cls = ((int) $t['level'] === 1) ? 'toc-h1' : 'toc-h2 toc-h2-sub';
+        $h  .= '<div class="' . $cls . '"><a href="#' . $t['slug'] . '">' . $txt . "</a></div>\n";
+    }
+    $h .= "</div>\n";
+    return $h;
+}
+
+// Doplňkové CSS pro combine TOC (dvě úrovně) — připojí se k hlavnímu CSS.
+function combineTocCss(): string
+{
+    return '.toc-h1 { margin: 4mm 0 1mm 0; font-size: 12pt; font-weight: 700; }'
+        . '.toc-h1 a { color: #4c1d95; text-decoration: none; }'
+        . '.toc-h2-sub { margin: 1mm 0 1mm 6mm; font-size: 10.2pt; }'
+        . '.toc-h2-sub a { color: #4b5563; text-decoration: none; }';
+}
+
+// ---- COMBINE: mPDF renderer -------------------------------------------
+function renderCombined(array $files): array
+{
+    global $OUT_DIR, $AUTHOR, $COMPANY, $BRAND, $CFG, $TOOLS_DIR;
+
+    $built        = buildCombinedBody($files, 'mpdf');
+    $bodyHtml     = $built['html'];
+    $toc          = $built['toc'];
+    $maxCodeWidth = $built['maxCodeWidth'];
+
+    $codeFontPt = 9.0;
+    if ($maxCodeWidth > 0) {
+        $pt = (168.0 * 72.0) / (25.4 * 0.59 * $maxCodeWidth);
+        $codeFontPt = max(6.8, min(9.0, $pt));
+    }
+    $css = buildCss(8.9, $codeFontPt);
+
+    $cov     = combineCoverParts();
+    $genDate = date($CFG['date_format'] ?? 'j. n. Y');
+
+    // logo (stejně jako jednodokumentový mPDF renderer)
+    $logoSvg = $CFG['logo']['svg'] ?? null;
+    $logoPng = $CFG['logo']['png'] ?? null;
+    if ($logoSvg === null && $logoPng === null) {
+        $logoSvg = $TOOLS_DIR . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'logo-clean.svg';
+        $logoPng = $TOOLS_DIR . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'logo-white.png';
+    }
+    $logoFile = ($logoSvg && is_file($logoSvg)) ? $logoSvg
+              : (($logoPng && is_file($logoPng)) ? $logoPng : null);
+    $logoHtml = '';
+    if ($logoFile !== null) {
+        $logoSrc  = htmlspecialchars($logoFile, ENT_QUOTES, 'UTF-8');
+        $logoHtml = '<div style="position:absolute;left:0;top:262mm;width:210mm;text-align:center;">'
+                  . '<img src="' . $logoSrc . '" style="width:42mm;" alt="' . htmlspecialchars($COMPANY, ENT_QUOTES, 'UTF-8') . '" />'
+                  . '</div>';
+    }
+
+    $cover = <<<HTML
+{$logoHtml}
+<div class="cover">
+  <div class="cover-band">
+    <div class="cover-rule"></div>
+    <div class="cover-eyebrow">{$cov['eyebrow']}</div>
+    <h1 class="cover-title">{$cov['title']}</h1>
+    {$cov['purpose']}
+    <table class="cover-meta" cellspacing="0" cellpadding="0">
+      {$cov['metaRows']}
+    </table>
+  </div>
+</div>
+HTML;
+
+    $tocHtml = combineTocHtml($toc);
+
+    $tmpDir = sys_get_temp_dir() . '/md2pdf-mpdf';
+    @mkdir($tmpDir, 0775, true);
+
+    $defCfg   = (new \Mpdf\Config\ConfigVariables())->getDefaults();
+    $defFonts = (new \Mpdf\Config\FontVariables())->getDefaults();
+    $fontData = $defFonts['fontdata'];
+    $fontData['sourcesans'] = [
+        'R' => 'SourceSans3-Regular.ttf', 'B' => 'SourceSans3-Bold.ttf',
+        'I' => 'SourceSans3-It.ttf', 'BI' => 'SourceSans3-BoldIt.ttf',
+    ];
+    $fontData['cascadiamono'] = [
+        'R' => 'CascadiaMono.ttf', 'B' => 'CascadiaMono.ttf',
+        'I' => 'CascadiaMono.ttf', 'BI' => 'CascadiaMono.ttf',
+    ];
+
+    $mpdf = new \Mpdf\Mpdf([
+        'mode'              => 'utf-8',
+        'format'            => 'A4',
+        'margin_left'       => 18,
+        'margin_right'      => 18,
+        'margin_top'        => 20,
+        'margin_bottom'     => 18,
+        'margin_header'     => 8,
+        'margin_footer'     => 9,
+        'default_font_size' => 10.3,
+        'default_font'      => 'sourcesans',
+        'tempDir'           => $tmpDir,
+        'autoLangToFont'    => false,
+        'autoScriptToLang'  => false,
+        'fontDir'           => array_merge($defCfg['fontDir'], [__DIR__ . '/fonts']),
+        'fontdata'          => $fontData,
+        'useSubstitutions'  => true,
+        'backupSubsFont'    => ['dejavusans', 'dejavusansmono'],
+    ]);
+
+    $title = html_entity_decode($cov['title'], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $mpdf->SetTitle($title);
+    if ($AUTHOR !== '') { $mpdf->SetAuthor($AUTHOR); }
+    $mpdf->SetCreator(($BRAND !== '' ? $BRAND . ' ' : '') . 'md2pdf.php (mPDF)');
+    $mpdf->SetSubject($BRAND !== '' ? $BRAND . ' — ' . $title : $title);
+
+    $mpdf->useKerning = true;
+    $mpdf->shrink_tables_to_fit = 1;
+    $mpdf->use_kwt = true;
+    $mpdf->defaultheaderline = 0;
+    $mpdf->defaultfooterline = 0;
+
+    $dkRaw    = (string) ($CFG['doc_kind'] ?? '');
+    $hdrTitle = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
+    $hdrBrand = $BRAND !== ''
+        ? '<span style="color:#4c1d95;font-weight:700;">' . htmlspecialchars($BRAND, ENT_QUOTES, 'UTF-8') . '</span> &nbsp;&#183;&nbsp; '
+        : '';
+    $headerHtml =
+        '<table style="width:100%;border-bottom:0.5pt solid #d1d5db;font-size:8pt;color:#6b7280;"><tr>'
+        . '<td style="text-align:left;">' . $hdrBrand . $hdrTitle . '</td>'
+        . '<td style="text-align:right;width:34mm;color:#4c1d95;font-weight:700;">'
+        . htmlspecialchars($COMPANY, ENT_QUOTES, 'UTF-8') . '</td>'
+        . '</tr></table>';
+
+    $pageLabel = htmlspecialchars($CFG['strings']['page_label'] ?? 'Strana', ENT_QUOTES, 'UTF-8');
+    $footKind  = $dkRaw !== '' ? mb_strtolower($dkRaw, 'UTF-8') : '';
+    $footRight = ($footKind !== '' ? htmlspecialchars($footKind, ENT_QUOTES, 'UTF-8') . ' &#183; ' : '') . $genDate;
+    $footerHtml =
+        '<table style="width:100%;border-top:0.5pt solid #d1d5db;font-size:8pt;color:#6b7280;padding-top:1mm;"><tr>'
+        . '<td style="text-align:left;color:#4c1d95;font-weight:700;">'
+        . htmlspecialchars($COMPANY, ENT_QUOTES, 'UTF-8') . '</td>'
+        . '<td style="text-align:center;">' . $pageLabel . ' {PAGENO} / {nbpg}</td>'
+        . '<td style="text-align:right;">' . $footRight . '</td>'
+        . '</tr></table>';
+
+    $mpdf->DefHTMLHeaderByName('mainhdr', $headerHtml);
+    $mpdf->DefHTMLFooterByName('mainftr', $footerHtml);
+
+    $mpdf->WriteHTML($css, \Mpdf\HTMLParserMode::HEADER_CSS);
+    $mpdf->WriteHTML(combineTocCss(), \Mpdf\HTMLParserMode::HEADER_CSS);
+
+    // Titulka full-bleed bez furniture
+    $mpdf->WriteHTML('.cover-band{height:297mm;} .cover{page-break-after:auto;}', \Mpdf\HTMLParserMode::HEADER_CSS);
+    $mpdf->AddPageByArray(['mgl' => 0, 'mgr' => 0, 'mgt' => 0, 'mgb' => 0, 'mgh' => 0, 'mgf' => 0]);
+    $mpdf->WriteHTML($cover, \Mpdf\HTMLParserMode::HTML_BODY);
+
+    // Obsah + tělo s běžícími okraji + hlavičkou/patičkou
+    $mpdf->AddPageByArray([
+        'mgl' => 18, 'mgr' => 18, 'mgt' => 20, 'mgb' => 18, 'mgh' => 8, 'mgf' => 9,
+        'ohname' => 'mainhdr', 'ehname' => 'mainhdr',
+        'ofname' => 'mainftr', 'efname' => 'mainftr',
+        'ohvalue' => 1, 'ehvalue' => 1, 'ofvalue' => 1, 'efvalue' => 1,
+        'resetpagenum' => 1,
+    ]);
+    $mpdf->WriteHTML($tocHtml . $bodyHtml, \Mpdf\HTMLParserMode::HTML_BODY);
+
+    $outName = (string) ($CFG['combine']['output'] ?? 'combined.pdf');
+    $outPath = $OUT_DIR . DIRECTORY_SEPARATOR . $outName;
+    $pdfData = $mpdf->Output('', \Mpdf\Output\Destination::STRING_RETURN);
+    $written = false; $lastErr = '';
+    for ($attempt = 0; $attempt < 8; $attempt++) {
+        $fh = @fopen($outPath, 'wb');
+        if ($fh !== false) { fwrite($fh, $pdfData); fclose($fh); $written = true; break; }
+        $e = error_get_last(); $lastErr = $e['message'] ?? 'unknown';
+        usleep(250000);
+    }
+    if (!$written) { throw new RuntimeException("Nelze zapsat {$outPath} ({$lastErr})"); }
+
+    return [
+        'base' => pathinfo($outName, PATHINFO_FILENAME), 'title' => $title, 'out' => $outPath,
+        'pages' => $mpdf->page, 'size_kb' => round(filesize($outPath) / 1024, 1),
+        'codeFontPt' => round($codeFontPt, 2), 'maxCodeW' => $maxCodeWidth,
+        'chapters' => count($files), 'tocItems' => count($toc),
+    ];
+}
+
+// ---- COMBINE: Chrome renderer -----------------------------------------
+function renderCombinedChrome(array $files): array
+{
+    global $OUT_DIR, $AUTHOR, $COMPANY, $BRAND, $CFG, $TOOLS_DIR;
+
+    $chrome = chromeExe();
+    $gs     = ghostscriptExe();
+    if ($chrome === null) { throw new RuntimeException("Chrome/Edge nenalezen ('renderer'=>'mpdf' nebo nastav 'chrome'=>['exe'=>…])"); }
+    if ($gs === null)     { throw new RuntimeException("GhostScript nenalezen ('renderer'=>'mpdf' nebo nastav 'chrome'=>['gs'=>…])"); }
+
+    $built        = buildCombinedBody($files, 'chrome');
+    $bodyHtml     = $built['html'];
+    $toc          = $built['toc'];
+    $maxCodeWidth = $built['maxCodeWidth'];
+
+    $codeFontPt = 9.0;
+    if ($maxCodeWidth > 0) {
+        $pt = (168.0 * 72.0) / (25.4 * 0.59 * $maxCodeWidth);
+        $codeFontPt = max(6.8, min(9.0, $pt));
+    }
+    $css = buildCss(8.9, $codeFontPt);
+
+    $cov     = combineCoverParts();
+    $title   = html_entity_decode($cov['title'], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $genDate = date($CFG['date_format'] ?? 'j. n. Y');
+
+    $logoSvg = $CFG['logo']['svg'] ?? null;
+    $logoPng = $CFG['logo']['png'] ?? null;
+    if ($logoSvg === null && $logoPng === null) {
+        $logoSvg = $TOOLS_DIR . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'logo-clean.svg';
+        $logoPng = $TOOLS_DIR . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'logo-white.png';
+    }
+    $logoFile = ($logoSvg && is_file($logoSvg)) ? $logoSvg : (($logoPng && is_file($logoPng)) ? $logoPng : null);
+    $logoHtml = '';
+    if ($logoFile !== null) {
+        $logoUrl  = 'file:///' . str_replace('\\', '/', $logoFile);
+        $logoHtml = '<div class="cover-logo-bottom"><img src="' . htmlspecialchars($logoUrl, ENT_QUOTES, 'UTF-8') . '" alt="" /></div>';
+    }
+    $cover = <<<HTML
+<div class="cover">
+  <div class="cover-band">
+    <div class="cover-rule"></div>
+    <div class="cover-eyebrow">{$cov['eyebrow']}</div>
+    <h1 class="cover-title">{$cov['title']}</h1>
+    {$cov['purpose']}
+    <table class="cover-meta" cellspacing="0" cellpadding="0">
+      {$cov['metaRows']}
+    </table>
+    {$logoHtml}
+  </div>
+</div>
+HTML;
+
+    $tocHtml = combineTocHtml($toc);
+
+    $fontsDir = str_replace('\\', '/', $TOOLS_DIR) . '/fonts';
+    $fontFace = '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-Regular.ttf");font-weight:normal;font-style:normal;font-display:block;}'
+        . '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-Bold.ttf");font-weight:bold;font-style:normal;font-display:block;}'
+        . '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-It.ttf");font-weight:normal;font-style:italic;font-display:block;}'
+        . '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-BoldIt.ttf");font-weight:bold;font-style:italic;font-display:block;}'
+        . '@font-face{font-family:"cascadiamono";src:url("file:///' . $fontsDir . '/CascadiaMono.ttf");font-display:block;}'
+        . '*{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }';
+    $coverCss = '@page{ size:A4; margin:0; }'
+        . 'html,body{ margin:0; padding:0; width:101%; height:297mm; overflow:hidden; background:#4c1d95; }'
+        . '.cover{ page-break-after:auto; }'
+        . '.cover-band{ box-sizing:border-box; width:101%; height:297mm; display:flex; flex-direction:column; }'
+        . '.cover-logo-bottom{ margin-top:auto; text-align:center; padding-top:8mm; }'
+        . '.cover-logo-bottom img{ width:42mm; }';
+    $mainCss = '@page{ size:A4; }'
+        . 'html,body{ margin:0; padding:0; }'
+        . '.toc{ page-break-after:always; }'
+        . '.toc-title{ margin-top:0; }'
+        . combineTocCss()
+        . '.fig svg{ max-width:100%; height:auto; }'
+        . '.fig img{ box-sizing:border-box; max-width:100%; }'
+        . 'h1.pb, h2.pb,'
+        . '.toc + h1, .toc + h2,'
+        . 'body > h1:first-child, body > h2:first-child{ margin-top:0; padding-top:0; }';
+    $mkDoc = function (string $extraCss, string $inner) use ($css, $fontFace): string {
+        return "<!DOCTYPE html>\n<html lang=\"cs\"><head><meta charset=\"utf-8\">\n<style>\n"
+            . $css . "\n" . $fontFace . "\n" . $extraCss . "\n</style>\n</head>\n<body>\n"
+            . $inner . "\n</body></html>\n";
+    };
+
+    $work = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'md2pdf-chrome-combine-' . getmypid();
+    @mkdir($work, 0775, true);
+    $coverHtml = $work . DIRECTORY_SEPARATOR . 'cover.html';
+    $mainHtml  = $work . DIRECTORY_SEPARATOR . 'main.html';
+    $coverPdf  = $work . DIRECTORY_SEPARATOR . 'cover.pdf';
+    $mainPdf   = $work . DIRECTORY_SEPARATOR . 'main.pdf';
+    $coverJob  = $work . DIRECTORY_SEPARATOR . 'cover-job.json';
+    $mainJob   = $work . DIRECTORY_SEPARATOR . 'main-job.json';
+    $tmpFinal  = $work . DIRECTORY_SEPARATOR . 'final.pdf';
+    file_put_contents($coverHtml, $mkDoc($coverCss, $cover));
+    file_put_contents($mainHtml,  $mkDoc($mainCss, $tocHtml . "\n" . $bodyHtml));
+
+    $pageLabel = htmlspecialchars($CFG['strings']['page_label'] ?? 'Strana', ENT_QUOTES, 'UTF-8');
+    $dkRaw  = (string) ($CFG['doc_kind'] ?? '');
+    $hBrand = htmlspecialchars($BRAND, ENT_QUOTES, 'UTF-8');
+    $hTitle = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
+    $hComp  = htmlspecialchars($COMPANY, ENT_QUOTES, 'UTF-8');
+    $footKind  = $dkRaw !== '' ? mb_strtolower($dkRaw, 'UTF-8') : '';
+    $footRight = ($footKind !== '' ? htmlspecialchars($footKind, ENT_QUOTES, 'UTF-8') . ' &#183; ' : '') . $genDate;
+    $headerTpl = '<div style="font-family:Arial,sans-serif;font-size:8pt;color:#6b7280;width:100%;padding:0 18mm;box-sizing:border-box;">'
+        . '<table style="width:100%;border-collapse:collapse;border-bottom:0.5pt solid #d1d5db;"><tr>'
+        . '<td style="text-align:left;padding-bottom:1mm;"><span style="color:#4c1d95;font-weight:bold;">' . $hBrand . '</span>'
+        . ($hBrand !== '' ? ' &#183; ' : '') . $hTitle . '</td>'
+        . '<td style="text-align:right;color:#4c1d95;font-weight:bold;padding-bottom:1mm;width:40mm;">' . $hComp . '</td>'
+        . '</tr></table></div>';
+    $footerTpl = '<div style="font-family:Arial,sans-serif;font-size:8pt;color:#6b7280;width:100%;padding:0 18mm;box-sizing:border-box;">'
+        . '<table style="width:100%;border-collapse:collapse;border-top:0.5pt solid #d1d5db;"><tr>'
+        . '<td style="text-align:left;color:#4c1d95;font-weight:bold;padding-top:1mm;">' . $hComp . '</td>'
+        . '<td style="text-align:center;padding-top:1mm;">' . $pageLabel . ' <span class="pageNumber"></span> / <span class="totalPages"></span></td>'
+        . '<td style="text-align:right;padding-top:1mm;">' . $footRight . '</td>'
+        . '</tr></table></div>';
+
+    $margins = $CFG['chrome']['margins'] ?? ['top' => '22mm', 'bottom' => '16mm', 'left' => '18mm', 'right' => '18mm'];
+    file_put_contents($coverJob, json_encode([
+        'html' => str_replace('\\', '/', $coverHtml), 'out' => str_replace('\\', '/', $coverPdf),
+        'chrome' => $chrome, 'margin' => ['top' => '0', 'bottom' => '0', 'left' => '0', 'right' => '0'],
+        'displayHeaderFooter' => false,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    file_put_contents($mainJob, json_encode([
+        'html' => str_replace('\\', '/', $mainHtml), 'out' => str_replace('\\', '/', $mainPdf),
+        'chrome' => $chrome, 'margin' => $margins,
+        'displayHeaderFooter' => true, 'headerTemplate' => $headerTpl, 'footerTemplate' => $footerTpl,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+    $nodeRun = function (string $jobPath) use ($TOOLS_DIR) {
+        $cmd = implode(' ', array_map('escapeshellarg', ['node', $TOOLS_DIR . '/render-pdf.mjs', $jobPath])) . ' 2>&1';
+        @exec($cmd, $o, $rc);
+        return [$rc, $o];
+    };
+    [$rc1, $o1] = $nodeRun($coverJob);
+    [$rc2, $o2] = $nodeRun($mainJob);
+    if (!is_file($coverPdf) || !is_file($mainPdf)) {
+        throw new RuntimeException("Chrome render selhal (cover rc={$rc1}, main rc={$rc2}): " . implode(' | ', array_merge($o1, $o2)));
+    }
+
+    $imgDpi = (int) ($CFG['chrome']['image_dpi'] ?? 200);
+    $gsArgs = [$gs, '-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.5', '-dPDFSETTINGS=/printer',
+        '-dSubsetFonts=true', '-dCompressFonts=true', '-dDetectDuplicateImages=true'];
+    if ($imgDpi > 0 && $imgDpi < 300) {
+        $gsArgs = array_merge($gsArgs, [
+            '-dDownsampleColorImages=true', '-dColorImageResolution=' . $imgDpi, '-dColorImageDownsampleThreshold=1.0',
+            '-dDownsampleGrayImages=true', '-dGrayImageResolution=' . $imgDpi, '-dGrayImageDownsampleThreshold=1.0',
+        ]);
+    }
+    $gsArgs = array_merge($gsArgs, ['-dNOPAUSE', '-dBATCH', '-dQUIET', '-sOutputFile=' . $tmpFinal, $coverPdf, $mainPdf]);
+    $gcmd = implode(' ', array_map('escapeshellarg', $gsArgs)) . ' 2>&1';
+    @exec($gcmd, $go, $grc);
+    if (!is_file($tmpFinal) || filesize($tmpFinal) === 0) {
+        throw new RuntimeException("GhostScript merge selhal (rc={$grc}): " . implode(' | ', $go));
+    }
+    $pages = gsPageCount($gs, $tmpFinal);
+
+    $outName = (string) ($CFG['combine']['output'] ?? 'combined.pdf');
+    $outPath = $OUT_DIR . DIRECTORY_SEPARATOR . $outName;
+    $pdfData = file_get_contents($tmpFinal);
+    $written = false; $lastErr = '';
+    for ($attempt = 0; $attempt < 8; $attempt++) {
+        $fh = @fopen($outPath, 'wb');
+        if ($fh !== false) { fwrite($fh, $pdfData); fclose($fh); $written = true; break; }
+        $e = error_get_last(); $lastErr = $e['message'] ?? 'unknown';
+        usleep(250000);
+    }
+    if (!$written) { throw new RuntimeException("Nelze zapsat {$outPath} ({$lastErr})"); }
+
+    foreach ([$coverHtml, $mainHtml, $coverPdf, $mainPdf, $coverJob, $mainJob, $tmpFinal] as $f) { @unlink($f); }
+    @rmdir($work);
+
+    return [
+        'base' => pathinfo($outName, PATHINFO_FILENAME), 'title' => $title, 'out' => $outPath,
+        'pages' => $pages, 'size_kb' => round(filesize($outPath) / 1024, 1),
+        'codeFontPt' => round($codeFontPt, 2), 'maxCodeW' => $maxCodeWidth,
+        'chapters' => count($files), 'tocItems' => count($toc),
+    ];
+}
+
 // Knihovní režim: při includu s definovanou konstantou MD2PDF_LIB_ONLY vystav
 // jen funkce/proměnné a NEspouštěj CLI main. Pro běžné `php md2pdf.php` je to
 // no-op (konstanta není definovaná), takže žádná změna chování.
@@ -1665,6 +2237,25 @@ if ($renderer === 'chrome' && chromeExe() === null) {
 echo ($BRAND !== '' ? $BRAND . ' ' : '') . "md2pdf — zdroj: {$SRC_DIR}\n";
 echo "Výstup: {$OUT_DIR}  (renderer: {$renderer})\n";
 echo str_repeat('-', 64) . "\n";
+
+// ---- COMBINE režim: VÍCE .md → JEDEN PDF -----------------------------------
+// Aktivní jen když config má `combine.enabled => true`. Filtr na jeden basename
+// (poziční argument) v combine režimu nedává smysl → ignoruje se. Jinak (klíč
+// nezadán) běží níže standardní smyčka jeden-PDF-na-soubor, beze změny.
+if (($CFG['combine']['enabled'] ?? false) === true) {
+    $ordered = combineOrderFiles($files);
+    $outName = (string) ($CFG['combine']['output'] ?? 'combined.pdf');
+    echo "Combine: " . count($ordered) . " souborů → {$outName}\n";
+    try {
+        $r = ($renderer === 'mpdf') ? renderCombined($ordered) : renderCombinedChrome($ordered);
+        printf("Hotovo: %s  (%d str, %s kB, %d kapitol, %d TOC, kód %spt/maxW %d)\n",
+            $r['out'], $r['pages'], $r['size_kb'], $r['chapters'], $r['tocItems'], $r['codeFontPt'], $r['maxCodeW']);
+        exit(0);
+    } catch (\Throwable $e) {
+        fwrite(STDERR, "CHYBA: " . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n");
+        exit(1);
+    }
+}
 
 $results = [];
 $hadError = false;

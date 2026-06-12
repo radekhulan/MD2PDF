@@ -31,6 +31,49 @@ return [
     // straně). true = Ano (default), false = Ne (kapitoly plynou za sebou).
     'chapter_page_break' => true,
 
+    // Stránkový zlom před H2 lze řídit ODDĚLENĚ od H1. Když není zadán, dědí
+    // z 'chapter_page_break'. V jednodokumentovém režimu je H1 titul (vyříznut)
+    // a kapitoly jsou H2 → ponech default. V COMBINE režimu (níže) jsou kapitoly
+    // H1 a H2 jsou sekce uvnitř → nastav 'h2_page_break' => false.
+    // 'h2_page_break' => false,
+
+    // Které úrovně nadpisů jdou do obsahu (TOC). Default [2, 3] (sekce + podsekce
+    // jednoho dokumentu). V COMBINE režimu typicky [1, 2] (kapitoly + sekce).
+    // 'toc_levels' => [2, 3],
+
+    // --- COMBINE: VÍCE .md → JEDEN PDF -----------------------------------
+    // Volitelné. Když 'enabled' => true, engine NEgeneruje jeden PDF na soubor,
+    // ale sloučí všechny soubory dle 'glob' do JEDNOHO PDF: jedna titulní strana
+    // (z klíčů níže, NE z H1 souboru), jeden průběžný obsah, stránkový zlom před
+    // každou kapitolou (H1), a cross-chapter `.md` odkazy přepsané na klikací
+    // interní kotvy (#slug prvního H1 cílové kapitoly). Když klíč chybí / je
+    // false, chování je nezměněné (jeden PDF na soubor).
+    //
+    // Doporučená souhra kláves pro combine:
+    //   'glob'               => '[0-9][0-9]*_*.md'   (jen kapitoly; index řídí pořadí)
+    //   'chapter_page_break' => true
+    //   'h2_page_break'      => false
+    //   'toc_levels'         => [1, 2]
+    //
+    // 'combine' => [
+    //     'enabled'  => true,
+    //     'output'   => 'manual.pdf',          // název výsledného PDF v output_dir
+    //     'index'    => 'INDEX.md',            // pořadí kapitol z indexu (### skupiny +
+    //                                          // číslované [název](NN_Name.md)); soubory
+    //                                          // mimo index se připojí na konec abecedně.
+    //                                          // null = pořadí dle glob/abecedy.
+    //     'title'    => 'Název dokumentu',     // titul na titulce
+    //     'subtitle' => 'Krátký podtitul.',    // podtitul (inline markdown povolen)
+    //     // Vlastní řádky metadat titulky. value smí obsahovat HTML/odkazy;
+    //     // token {date} se nahradí datem generování. Když klíč chybí, použijí
+    //     // se default řádky (Autor/Společnost/Vygenerováno).
+    //     'meta_rows' => [
+    //         ['Dokument', 'Název dokumentu'],
+    //         ['Datum',    '{date}'],
+    //         ['Web',      '<a href="https://example.com/" style="color:#fff;">example.com</a>'],
+    //     ],
+    // ],
+
     // --- Renderer ---------------------------------------------------------
     // 'mpdf' (DEFAULT) = čistě PHP (mPDF), bez externích závislostí; mermaid
     //     jako PNG (mermaid-cli). Menší soubory, žádný Node/Chrome.

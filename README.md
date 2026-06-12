@@ -14,7 +14,7 @@
 
 ## Co to je
 
-`md2pdf.php` je samostatný PHP nástroj, který převede jeden nebo více Markdown souborů na samostatná, profesionálně vysázená PDF (jeden PDF na dokument). Je navržený jako **sdílený engine**: nainstaluješ ho jednou (např. do `c:\work\MD2PDF`) a používáš napříč projekty — každý projekt má jen svůj `md2pdf.config.php`.
+`md2pdf.php` je samostatný PHP nástroj, který převede jeden nebo více Markdown souborů na profesionálně vysázená PDF. Umí **dva režimy**: výchozí **jeden PDF na dokument**, nebo **combine** — sloučení mnoha `.md` do **jednoho** PDF s jednou titulkou a průběžným obsahem (např. vícekapitolový manuál). Je navržený jako **sdílený engine**: nainstaluješ ho jednou (např. do `c:\work\MD2PDF`) a používáš napříč projekty — každý projekt má jen svůj `md2pdf.config.php`.
 
 ## Vlastnosti
 
@@ -27,7 +27,8 @@
 - **Mermaid diagramy** — renderer `chrome` vkládá ostré **vektorové SVG**, renderer `mpdf` PNG přes [mermaid-cli](https://github.com/mermaid-js/mermaid-cli).
 - **Auto-fit** širokých code-bloků (ASCII diagramy) a tabulek; dlouhé tokeny (DNS/base64) se zalomí.
 - **Embedované volné fonty** (Source Sans 3 + Cascadia Mono + DejaVu záloha) → PDF vypadá všude stejně a je legálně přenositelné.
-- **Stránkové zlomy** — každá `# H1` i `## H2` kapitola začíná na nové straně.
+- **Stránkové zlomy** — každá `# H1` i `## H2` kapitola začíná na nové straně (H2 zlom lze vypnout zvlášť přes `h2_page_break`).
+- **Combine režim** — sloučení mnoha `.md` do **jednoho** PDF (vícekapitolový manuál): jedna titulka, jeden průběžný obsah (kapitoly H1 + sekce H2), pořadí z `INDEX.md`, cross-chapter `.md` odkazy jako klikací interní kotvy.
 
 ## Požadavky
 
@@ -123,6 +124,10 @@ Config je PHP soubor vracející pole. Plně okomentovaný vzor je [`md2pdf.conf
 | `source_meta_labels` | labely metabloku v `.md` (`Verze`/`Datum`/`Autor`/`Účel`) |
 | `lead_blockquote` | `'meta'` (úvodní blockquote = metadata) / `'keep'` (= obsah) |
 | `warn_keywords` | klíčová slova pro „varovný" callout |
+| `chapter_page_break` | zlom před každou kapitolou (H1/H2); default `true` |
+| `h2_page_break` | zlom před H2 zvlášť; default = `chapter_page_break` |
+| `toc_levels` | úrovně nadpisů v obsahu; default `[2, 3]` (combine typicky `[1, 2]`) |
+| `combine` | sloučení více `.md` do jednoho PDF (viz [Combine](#combine)) |
 | `renderer` | `'mpdf'` (default) nebo `'chrome'` (vektorový mermaid) |
 | `chrome` | nastavení chrome rendereru (`exe`, `gs`, `image_dpi`, `margins`) |
 | `mermaid` | render mermaidu (viz níže) |
@@ -143,6 +148,41 @@ Config je PHP soubor vracející pole. Plně okomentovaný vzor je [`md2pdf.conf
 - **Callouty:** každý blockquote se vykreslí jako box; obsahuje-li `⚠`/`POZOR`/… (dle `warn_keywords`), je oranžový.
 - **Obrázky:** `![popis](cesta.png)` — relativní cesty se berou vůči `source_dir`.
 - **Mermaid:** blok s jazykem `mermaid` → vyrenderovaný diagram (viz níže).
+
+## Combine
+
+Ve výchozím stavu vzniká **jeden PDF na soubor**. Klíč `combine` přepne engine do režimu **více `.md` → jeden PDF** — ideální pro vícekapitolový manuál, kde každý soubor je jedna kapitola.
+
+V combine režimu:
+
+- **Titulní strana** se NEbere z H1 souboru, ale z configu (`combine.title`, `combine.subtitle`, `combine.meta_rows`). H1 každého souboru zůstává v těle jako **nadpis kapitoly**.
+- **Pořadí kapitol** řídí volitelný index (`combine.index`, např. `INDEX.md`) — parsuje číslované odkazy `[název](NN_Name.md)` (a `### skupiny`). Soubory mimo index se připojí na konec abecedně. Bez indexu se řadí dle `glob`/abecedy.
+- **Obsah (TOC)** je jeden průběžný, typicky kapitoly (H1) + sekce (H2) → nastav `toc_levels => [1, 2]`.
+- **Stránkové zlomy** — každá kapitola (H1) začíná na nové straně; sekce (H2) plynou dál → `chapter_page_break => true` + `h2_page_break => false`.
+- **Cross-chapter odkazy** — `[text](NN_Name.md)` se přepíše na klikací interní kotvu (na první H1 cílové kapitoly), `[text](NN_Name.md#sekce)` na kotvu dané sekce.
+
+Minimální config:
+
+```php
+return [
+    'source_dir' => __DIR__ . '/../manual',
+    'output_dir' => __DIR__ . '/../manual',
+    'glob'       => '[0-9][0-9]*_*.md',   // jen kapitoly; INDEX.md řídí pořadí
+    'combine' => [
+        'enabled'  => true,
+        'output'   => 'manual.pdf',
+        'index'    => 'INDEX.md',
+        'title'    => 'Název manuálu',
+        'subtitle' => 'Krátký podtitul.',
+    ],
+    'chapter_page_break' => true,
+    'h2_page_break'      => false,
+    'toc_levels'         => [1, 2],
+    'author' => 'Jméno', 'company' => 'Firma', 'brand' => 'Projekt',
+];
+```
+
+Všechny klíče combine jsou okomentované v [`md2pdf.config.sample.php`](md2pdf.config.sample.php). Mimo combine (klíč chybí / `false`) se engine chová beze změny — jeden PDF na soubor, plně zpětně kompatibilně.
 
 ## Mermaid
 
@@ -184,7 +224,7 @@ Radek Hulán — [https://mywebdesign.cz/](https://mywebdesign.cz/)
 
 ## What it is
 
-`md2pdf.php` is a standalone PHP tool that converts one or more Markdown files into separate, professionally typeset PDFs (one PDF per document). It is designed as a **shared engine**: install it once (e.g. in `c:\work\MD2PDF`) and reuse it across projects — each project only carries its own `md2pdf.config.php`.
+`md2pdf.php` is a standalone PHP tool that converts one or more Markdown files into professionally typeset PDFs. It has **two modes**: the default **one PDF per document**, or **combine** — merging many `.md` files into a **single** PDF with one cover page and a continuous table of contents (e.g. a multi-chapter manual). It is designed as a **shared engine**: install it once (e.g. in `c:\work\MD2PDF`) and reuse it across projects — each project only carries its own `md2pdf.config.php`.
 
 ## Features
 
@@ -197,7 +237,8 @@ Radek Hulán — [https://mywebdesign.cz/](https://mywebdesign.cz/)
 - **Mermaid diagrams** — the `chrome` renderer embeds crisp **vector SVG**, the `mpdf` renderer PNG via [mermaid-cli](https://github.com/mermaid-js/mermaid-cli).
 - **Auto-fit** of wide code blocks (ASCII diagrams) and tables; long tokens (DNS/base64) wrap.
 - **Embedded free fonts** (Source Sans 3 + Cascadia Mono + DejaVu fallback) → PDF looks the same everywhere and is legally redistributable.
-- **Page breaks** — every `# H1` and `## H2` chapter starts on a new page.
+- **Page breaks** — every `# H1` and `## H2` chapter starts on a new page (the H2 break can be disabled separately via `h2_page_break`).
+- **Combine mode** — merge many `.md` files into a **single** PDF (multi-chapter manual): one cover, one continuous TOC (H1 chapters + H2 sections), order from `INDEX.md`, cross-chapter `.md` links as clickable internal anchors.
 
 ## Requirements
 
@@ -293,6 +334,10 @@ The config is a PHP file returning an array. A fully commented template is [`md2
 | `source_meta_labels` | meta-block labels in `.md` (`Verze`/`Datum`/`Autor`/`Účel`) |
 | `lead_blockquote` | `'meta'` (leading blockquote = metadata) / `'keep'` (= content) |
 | `warn_keywords` | keywords that mark a "warning" callout |
+| `chapter_page_break` | page break before each chapter (H1/H2); default `true` |
+| `h2_page_break` | page break before H2 separately; default = `chapter_page_break` |
+| `toc_levels` | heading levels in the TOC; default `[2, 3]` (combine typically `[1, 2]`) |
+| `combine` | merge many `.md` into one PDF (see [Combine](#combine-1)) |
 | `renderer` | `'mpdf'` (default) or `'chrome'` (vector mermaid) |
 | `chrome` | chrome renderer settings (`exe`, `gs`, `image_dpi`, `margins`) |
 | `mermaid` | mermaid rendering (see below) |
@@ -313,6 +358,41 @@ The config is a PHP file returning an array. A fully commented template is [`md2
 - **Callouts:** every blockquote renders as a box; if it contains a `warn_keywords` term it turns orange.
 - **Images:** `![alt](path.png)` — relative paths resolve against `source_dir`.
 - **Mermaid:** a `mermaid` block → a rendered diagram (see below).
+
+## Combine
+
+By default the engine produces **one PDF per file**. The `combine` key switches it to **many `.md` → a single PDF** — ideal for a multi-chapter manual where each file is one chapter.
+
+In combine mode:
+
+- The **cover page** is NOT taken from a file's H1 but from the config (`combine.title`, `combine.subtitle`, `combine.meta_rows`). Each file's H1 stays in the body as a **chapter heading**.
+- **Chapter order** comes from an optional index (`combine.index`, e.g. `INDEX.md`) — it parses numbered links `[title](NN_Name.md)` (and `### groups`). Files not in the index are appended alphabetically. Without an index, files are sorted by `glob`/alphabetically.
+- The **TOC** is a single continuous one, typically chapters (H1) + sections (H2) → set `toc_levels => [1, 2]`.
+- **Page breaks** — each chapter (H1) starts on a new page; sections (H2) flow on → `chapter_page_break => true` + `h2_page_break => false`.
+- **Cross-chapter links** — `[text](NN_Name.md)` is rewritten to a clickable internal anchor (to the target chapter's first H1), `[text](NN_Name.md#section)` to that section's anchor.
+
+Minimal config:
+
+```php
+return [
+    'source_dir' => __DIR__ . '/../manual',
+    'output_dir' => __DIR__ . '/../manual',
+    'glob'       => '[0-9][0-9]*_*.md',   // chapters only; INDEX.md drives order
+    'combine' => [
+        'enabled'  => true,
+        'output'   => 'manual.pdf',
+        'index'    => 'INDEX.md',
+        'title'    => 'Manual title',
+        'subtitle' => 'A short subtitle.',
+    ],
+    'chapter_page_break' => true,
+    'h2_page_break'      => false,
+    'toc_levels'         => [1, 2],
+    'author' => 'Name', 'company' => 'Company', 'brand' => 'Project',
+];
+```
+
+All combine keys are documented in [`md2pdf.config.sample.php`](md2pdf.config.sample.php). Without `combine` (key absent / `false`) the engine behaves unchanged — one PDF per file, fully backward compatible.
 
 ## Mermaid
 
