@@ -31,6 +31,15 @@ return [
     // straně). true = Ano (default), false = Ne (kapitoly plynou za sebou).
     'chapter_page_break' => true,
 
+    // --- Písmo v code blocích --------------------------------------------
+    // DEFAULT (oba klíče vynechané): písmo kódu se NEZMENŠUJE (9 pt) a dlouhé
+    // řádky se v code blocích zalomí (white-space: pre-wrap). Platí pro mpdf
+    // i chrome. Volitelně:
+    //   'code_font_pt' => 9.0    // pevná velikost písma kódu (přebije vše)
+    //   'code_autofit' => true   // staré chování: zmenšit písmo (per dokument),
+    //                            // aby se nejširší řádek vešel na jeden řádek
+    // 'code_autofit' => false,
+
     // Stránkový zlom před H2 lze řídit ODDĚLENĚ od H1. Když není zadán, dědí
     // z 'chapter_page_break'. V jednodokumentovém režimu je H1 titul (vyříznut)
     // a kapitoly jsou H2 → ponech default. V COMBINE režimu (níže) jsou kapitoly

@@ -832,8 +832,9 @@ hr { border: none; border-top: 0.6pt solid #d1d5db; margin: 5mm 0; }
 /* ---------- Tabulky ---------- */
 table.md-tab {
   border-collapse: collapse; width: 100%; margin: 2.5mm 0 4.2mm 0;
+  table-layout: fixed;                 /* nedovol buňce roztáhnout tabulku přes stránku */
   font-size: {$tf}pt; line-height: 1.35;
-  overflow-wrap: break-word; word-wrap: break-word;
+  overflow-wrap: break-word; word-wrap: break-word; word-break: break-word;
 }
 table.md-tab th {
   background: #4c1d95; color: #ffffff; font-weight: 700;
@@ -900,6 +901,33 @@ CSS;
 //  ![](png). Když mmdc chybí nebo render selže, blok se PONECHÁ (spadne do
 //  code-boxu) — graceful degradation. PNG se cachují dle hashe obsahu.
 // =====================================================================
+// ---------------------------------------------------------------------
+//  Velikost písma v code blocích.
+//  DEFAULT: NEzmenšovat — vrať 9pt a dlouhé řádky nech zalomit
+//  (pre.code-block má white-space: pre-wrap). Platí pro oba renderery.
+//  Volitelně přes config:
+//    'code_font_pt' => 9.0    // pevná velikost (přebije vše)
+//    'code_autofit' => true   // staré chování: zmenšit, aby se řádek vešel
+// ---------------------------------------------------------------------
+function computeCodeFontPt(int $maxCodeWidth): float
+{
+    global $CFG;
+    if (isset($CFG['code_font_pt']) && $CFG['code_font_pt'] !== null) {
+        return (float) $CFG['code_font_pt'];
+    }
+    if (empty($CFG['code_autofit'])) {
+        return 9.0;                       // default: bez zdrobňování → zalomení
+    }
+    if ($maxCodeWidth <= 0) {
+        return 9.0;
+    }
+    // Auto-fit JEN na vyžádání: zmenši písmo, aby se nejširší řádek vešel.
+    // 0.62 = kalibrovaný advance Cascadia Mono vč. paddingu (0.59 podhodnocoval
+    // a řádek se i po zmenšení o chlup zalamoval).
+    $pt = (168.0 * 72.0) / (25.4 * 0.62 * $maxCodeWidth);
+    return max(6.8, min(9.0, $pt));
+}
+
 function locateMmdc(): ?string
 {
     global $CFG, $TOOLS_DIR;
@@ -1170,11 +1198,7 @@ function renderDocumentChrome(string $mdPath): array
     $bodyHtml = preg_replace('~<hr\s*/?>\s*$~', '', $bodyHtml);
     $bodyHtml .= renderFootnotesHtml($fn['order'], $fn['defs']);
 
-    $codeFontPt = 9.0;
-    if ($maxCodeWidth > 0) {
-        $pt = (168.0 * 72.0) / (25.4 * 0.59 * $maxCodeWidth);
-        $codeFontPt = max(6.8, min(9.0, $pt));
-    }
+    $codeFontPt = computeCodeFontPt($maxCodeWidth);
     $css = buildCss(8.9, $codeFontPt);
 
     // ---- titulní strana + TOC (HTML fragment) ----
@@ -1412,16 +1436,8 @@ function renderDocument(string $mdPath): array
     $bodyHtml = preg_replace('~<hr\s*/?>\s*$~', '', $bodyHtml);
     $bodyHtml .= renderFootnotesHtml($fn['order'], $fn['defs']);
 
-    // ---- Auto-fit písma kódu dle nejširšího řádku diagramu --------------
-    // Obsahová šířka strany ~ 174 mm (A4 210 - 2*18). Cascadia Mono: 1 znak ≈
-    // 0.59 * fontSize(pt) (advance 1200/2048 em). Najdi největší pt tak, aby
-    // maxWidth*0.59*pt/72*25.4 <= 168 (tmavý blok má větší vnitřní padding).
-    $codeFontPt = 9.0;
-    if ($maxCodeWidth > 0) {
-        $avail_mm = 168.0;
-        $pt = ($avail_mm * 72.0) / (25.4 * 0.59 * $maxCodeWidth);
-        $codeFontPt = max(6.8, min(9.0, $pt));
-    }
+    // ---- Velikost písma kódu (default: NEzmenšovat → dlouhé řádky se zalomí) ----
+    $codeFontPt = computeCodeFontPt($maxCodeWidth);
 
     // ---- Tabulkový font: docs jsou table-heavy a široké -------------------
     $tableFontPt = 8.9;
@@ -1867,11 +1883,7 @@ function renderCombined(array $files): array
     $toc          = $built['toc'];
     $maxCodeWidth = $built['maxCodeWidth'];
 
-    $codeFontPt = 9.0;
-    if ($maxCodeWidth > 0) {
-        $pt = (168.0 * 72.0) / (25.4 * 0.59 * $maxCodeWidth);
-        $codeFontPt = max(6.8, min(9.0, $pt));
-    }
+    $codeFontPt = computeCodeFontPt($maxCodeWidth);
     $css = buildCss(8.9, $codeFontPt);
 
     $cov     = combineCoverParts();
@@ -2037,11 +2049,7 @@ function renderCombinedChrome(array $files): array
     $toc          = $built['toc'];
     $maxCodeWidth = $built['maxCodeWidth'];
 
-    $codeFontPt = 9.0;
-    if ($maxCodeWidth > 0) {
-        $pt = (168.0 * 72.0) / (25.4 * 0.59 * $maxCodeWidth);
-        $codeFontPt = max(6.8, min(9.0, $pt));
-    }
+    $codeFontPt = computeCodeFontPt($maxCodeWidth);
     $css = buildCss(8.9, $codeFontPt);
 
     $cov     = combineCoverParts();
