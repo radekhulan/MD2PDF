@@ -190,7 +190,18 @@ Bloky `mermaid` se před sazbou vyrenderují do PNG přes `mmdc` a vloží jako 
 
 Engine hledá prohlížeč v pořadí: `mermaid.chrome` v configu → env `MD2PDF_CHROME` → stažený v `.puppeteer/` → systémový Chrome/Edge. Když mmdc nebo prohlížeč chybí, blok zůstane jako kód (graceful fallback).
 
-Konfigurace (sekce `mermaid` v configu): `enabled`, `mmdc`, `chrome`, `theme`, `background`, `scale`.
+**Výška diagramu** (renderer `chrome`): diagram se default roztáhne na šířku sloupce; když by tím přesáhl `mermaid.max_height` (default `245mm`), zmenší se proporcionálně tak, aby se vešel na jednu stranu (SVG nelze zlomit přes stránky). Per-diagram strop lze nastavit atributem v info-stringu fence — GitHub a ostatní renderery ho ignorují:
+
+~~~markdown
+```mermaid height=120mm
+flowchart TD
+    A --> B
+```
+~~~
+
+Jednotky: `mm`, `cm`, nebo `%` použitelné výšky strany (např. `height=50%` = max polovina strany). Atribut je *maximum* — menší diagram se nezvětšuje.
+
+Konfigurace (sekce `mermaid` v configu): `enabled`, `mmdc`, `chrome`, `theme`, `background`, `scale`, `max_height`.
 
 ## Fonty a licence
 
@@ -400,7 +411,18 @@ Fenced `mermaid` blocks are rendered to PNG via `mmdc` before typesetting and em
 
 Browser lookup order: `mermaid.chrome` in the config → env `MD2PDF_CHROME` → one downloaded into `.puppeteer/` → system Chrome/Edge. If `mmdc` or a browser is missing, the block stays as code (graceful fallback).
 
-Config (the `mermaid` section): `enabled`, `mmdc`, `chrome`, `theme`, `background`, `scale`.
+**Diagram height** (`chrome` renderer): a diagram stretches to the column width by default; if that would exceed `mermaid.max_height` (default `245mm`), it is scaled down proportionally to fit on a single page (SVG cannot break across pages). A per-diagram cap can be set via a fence info-string attribute — GitHub and other renderers ignore it:
+
+~~~markdown
+```mermaid height=120mm
+flowchart TD
+    A --> B
+```
+~~~
+
+Accepted values: `mm`, `cm`, or `%` of the usable page height (e.g. `height=50%`). The attribute is a *maximum* — smaller diagrams are never enlarged.
+
+Config (the `mermaid` section): `enabled`, `mmdc`, `chrome`, `theme`, `background`, `scale`, `max_height`.
 
 ## Fonts & licensing
 

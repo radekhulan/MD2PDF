@@ -151,6 +151,15 @@ return [
     // Renderer 'mpdf'   = PNG přes mermaid-cli (mmdc); 'scale' řídí ostrost.
     // Vyžaduje `npm install` v adresáři enginu (mermaid-cli + Chromium).
     // Když mmdc chybí, bloky se ponechají jako kód. Celá sekce je volitelná.
+    //
+    // Výška diagramu (jen renderer 'chrome'): diagram se default roztáhne na
+    // šířku sloupce; když by tak přesáhl 'max_height', zmenší se na fit, ať se
+    // vejde na jednu stranu (SVG přes stránkový zlom nejde — Chrome by ho ořízl).
+    // Per-diagram strop výšky atributem v info-stringu fence:
+    //   ```mermaid height=120mm     (i cm, nebo % použitelné výšky strany:
+    //   ```mermaid height=50%        = max polovina strany)
+    // Je to MAXIMUM — menší diagram se nezvětšuje. GitHub a ostatní renderery
+    // atribut ignorují (berou jen první slovo info-stringu).
     'mermaid' => [
         'enabled'    => true,       // false = ```mermaid sázet jako kód
         'mmdc'       => null,        // cesta k mmdc; null = autodetekce (engine/PATH)
@@ -160,5 +169,6 @@ return [
         'theme'      => 'default',   // default | neutral | dark | forest | base
         'background' => 'white',     // pozadí (white | transparent | #hex)
         'scale'      => 2.5,         // měřítko PNG renderu (jen renderer 'mpdf')
+        'max_height' => '245mm',     // strop výšky diagramu na stránce (chrome)
     ],
 ];

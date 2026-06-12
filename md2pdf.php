@@ -1044,10 +1044,11 @@ function preprocessMermaid(string $md): string
         return $md;
     }
 
+    // atributy z info-stringu (height=…) se u PNG cesty ignorují — sazbu řídí mPDF
     return preg_replace_callback(
-        '/^[ \t]*`{3,}[ \t]*mermaid[ \t]*\r?\n(.*?)\r?\n[ \t]*`{3,}[ \t]*$/ms',
+        MERMAID_FENCE_RE,
         function ($m) use ($mmdc) {
-            $png = renderMermaidToPng($m[1], $mmdc);
+            $png = renderMermaidToPng($m[2], $mmdc);
             return $png === null ? $m[0] : '![](' . $png . ')';
         },
         $md
@@ -1117,17 +1118,80 @@ function renderMermaidToSvg(string $src, string $mmdc): ?string
     return ($rc === 0 && is_file($svgPath) && filesize($svgPath) > 0) ? $svgPath : null;
 }
 
-// neutralizuj fixní rozměry SVG → škáluje se na šířku sloupce
-function responsiveSvg(string $svg): string
+// fence s volitelnými atributy v info-stringu: ```mermaid height=120mm
+// (skupina 1 = atributy nebo '', skupina 2 = zdroj diagramu)
+const MERMAID_FENCE_RE = '/^[ \t]*`{3,}[ \t]*mermaid([ \t][^\r\n]*)?\r?\n(.*?)\r?\n[ \t]*`{3,}[ \t]*$/ms';
+
+// délka v mm z configu/atributu ('245mm', '24.5cm', 245) → float mm
+function mmValue($v, float $default): float
 {
+    if (is_numeric($v)) { return (float) $v; }
+    if (is_string($v) && preg_match('/([\d.]+)\s*(mm|cm)?/i', $v, $m)) {
+        $n = (float) $m[1];
+        return (isset($m[2]) && strtolower($m[2]) === 'cm') ? $n * 10 : $n;
+    }
+    return $default;
+}
+
+// výška z info-stringu fence → mm; null = neuvedeno. Jednotky: mm (default),
+// cm, nebo % použitelné výšky strany (```mermaid height=50%).
+function mermaidFenceHeight(?string $info): ?float
+{
+    if ($info !== null && preg_match('/\bheight\s*=\s*"?([\d.]+)\s*(mm|cm|%)?"?/i', $info, $m)) {
+        $n = (float) $m[1];
+        $u = isset($m[2]) ? strtolower($m[2]) : 'mm';
+        if ($u === '%')  { return contentHeightMm() * $n / 100.0; }
+        if ($u === 'cm') { return $n * 10; }
+        return $n;
+    }
+    return null;
+}
+
+// šířka tiskového sloupce v mm (A4 − levý/pravý okraj chrome rendereru)
+function contentWidthMm(): float
+{
+    global $CFG;
+    $m = $CFG['chrome']['margins'] ?? [];
+    return 210.0 - mmValue($m['left'] ?? null, 18.0) - mmValue($m['right'] ?? null, 18.0);
+}
+
+// použitelná výška strany v mm (A4 − horní/dolní okraj chrome rendereru)
+function contentHeightMm(): float
+{
+    global $CFG;
+    $m = $CFG['chrome']['margins'] ?? [];
+    return 297.0 - mmValue($m['top'] ?? null, 22.0) - mmValue($m['bottom'] ?? null, 16.0);
+}
+
+// neutralizuj fixní rozměry SVG → škáluje se na šířku sloupce. Diagram, který
+// by při width:100% přesáhl použitelnou výšku strany (mermaid.max_height,
+// default 245mm), se zmenší na fit — Chrome SVG přes zlom neumí a ořízl by ho.
+// $heightMm = per-diagram strop z fence (```mermaid height=120mm / height=50%);
+// je to MAXIMUM — menší diagram se nezvětšuje.
+function responsiveSvg(string $svg, ?float $heightMm = null): string
+{
+    global $CFG;
     $svg = preg_replace('/^\xEF\xBB\xBF/', '', $svg);
     $svg = preg_replace('/<\?xml.*?\?>/s', '', $svg);
     $svg = preg_replace('/<!DOCTYPE.*?>/s', '', $svg);
-    if (preg_match('/<svg\b[^>]*\bviewBox=/i', $svg)) {
+    if (preg_match('/<svg\b[^>]*\bviewBox="\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)\s*"/i', $svg, $vb)) {
+        $style = 'width:100%;height:auto;display:block;margin:0 auto';
+        $vbW = (float) $vb[1];
+        $vbH = (float) $vb[2];
+        if ($vbW > 0 && $vbH > 0) {
+            $cap  = mmValue($CFG['mermaid']['max_height'] ?? null, 245.0);
+            if ($heightMm !== null) { $cap = min($heightMm, $cap); }
+            $colW = contentWidthMm();
+            $natH = $colW * $vbH / $vbW;  // výška při roztažení na šířku sloupce
+            if ($natH > $cap) {
+                $w = $cap * $vbW / $vbH;
+                $style = sprintf('height:%.1fmm;width:%.1fmm;max-width:100%%;display:block;margin:0 auto', $cap, $w);
+            }
+        }
         $svg = preg_replace('/(<svg\b[^>]*?)\s+width="[^"]*"/i',  '$1', $svg, 1);
         $svg = preg_replace('/(<svg\b[^>]*?)\s+height="[^"]*"/i', '$1', $svg, 1);
         $svg = preg_replace('/(<svg\b[^>]*?)\s+style="[^"]*"/i',  '$1', $svg, 1);
-        $svg = preg_replace('/<svg\b/i', '<svg style="width:100%;height:auto;display:block;margin:0 auto"', $svg, 1);
+        $svg = preg_replace('/<svg\b/i', '<svg style="' . $style . '"', $svg, 1);
     }
     return $svg;
 }
@@ -1171,11 +1235,12 @@ function renderDocumentChrome(string $mdPath): array
         $mmdc = locateMmdc();
         if ($mmdc) {
             $body = preg_replace_callback(
-                '/^[ \t]*`{3,}[ \t]*mermaid[ \t]*\r?\n(.*?)\r?\n[ \t]*`{3,}[ \t]*$/ms',
+                MERMAID_FENCE_RE,
                 function ($m) use (&$svgStore, $mmdc) {
-                    $svg = renderMermaidToSvg($m[1], $mmdc);
+                    $svg = renderMermaidToSvg($m[2], $mmdc);
                     if ($svg === null) { return $m[0]; }
-                    $i = count($svgStore); $svgStore[$i] = $svg;
+                    $i = count($svgStore);
+                    $svgStore[$i] = ['svg' => $svg, 'h' => mermaidFenceHeight($m[1])];
                     return '![](mermaidsvg:' . $i . ')';
                 },
                 $body
@@ -1191,7 +1256,8 @@ function renderDocumentChrome(string $mdPath): array
     $bodyHtml = preg_replace_callback('/<img\s+src="mermaidsvg:(\d+)"[^>]*>/i',
         function ($m) use ($svgStore) {
             $i = (int) $m[1];
-            return isset($svgStore[$i]) ? responsiveSvg(file_get_contents($svgStore[$i])) : '';
+            if (!isset($svgStore[$i])) { return ''; }
+            return responsiveSvg(file_get_contents($svgStore[$i]['svg']), $svgStore[$i]['h']);
         }, $bodyHtml);
     $bodyHtml = str_replace('<!--/fig-->', '', $bodyHtml);
     $bodyHtml = preg_replace('~<hr\s*/?>\s*(?=<h[12]\b)~', '', $bodyHtml);
@@ -1774,11 +1840,12 @@ function buildCombinedBody(array $files, string $renderer): array
             $mmdc = locateMmdc();
             if ($mmdc) {
                 $body = preg_replace_callback(
-                    '/^[ \t]*`{3,}[ \t]*mermaid[ \t]*\r?\n(.*?)\r?\n[ \t]*`{3,}[ \t]*$/ms',
+                    MERMAID_FENCE_RE,
                     function ($m) use (&$svgStore, $mmdc) {
-                        $svg = renderMermaidToSvg($m[1], $mmdc);
+                        $svg = renderMermaidToSvg($m[2], $mmdc);
                         if ($svg === null) { return $m[0]; }
-                        $i = count($svgStore); $svgStore[$i] = $svg;
+                        $i = count($svgStore);
+                        $svgStore[$i] = ['svg' => $svg, 'h' => mermaidFenceHeight($m[1])];
                         return '![](mermaidsvg:' . $i . ')';
                     },
                     $body
@@ -1790,7 +1857,8 @@ function buildCombinedBody(array $files, string $renderer): array
         $bodyHtml = preg_replace_callback('/<img\s+src="mermaidsvg:(\d+)"[^>]*>/i',
             function ($m) use ($svgStore) {
                 $i = (int) $m[1];
-                return isset($svgStore[$i]) ? responsiveSvg(file_get_contents($svgStore[$i])) : '';
+                if (!isset($svgStore[$i])) { return ''; }
+                return responsiveSvg(file_get_contents($svgStore[$i]['svg']), $svgStore[$i]['h']);
             }, $bodyHtml);
     } else {
         $body     = preprocessMermaid($fn['body']);  // mermaid → PNG
