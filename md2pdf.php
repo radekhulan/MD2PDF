@@ -21,6 +21,7 @@
  *   php tools/md2pdf.php                  # převede všechny dle 'glob' z configu
  *   php tools/md2pdf.php Nazev            # převede jen jeden (basename, .md volitelné)
  *   php tools/md2pdf.php --config=jiny.php   # použij jinou konfiguraci
+ *   php tools/md2pdf.php --renderer=chrome   # přebij renderer z configu (mpdf|chrome)
  *   php tools/md2pdf.php --print-config   # vypiš JSON {source_dir,output_dir,glob}
  *
  * Konstanty/texty specifické pro projekt (cesty, glob, identita, překlad,
@@ -37,14 +38,18 @@ require __DIR__ . '/vendor/autoload.php';
 
 $TOOLS_DIR = __DIR__;
 
-// ---- Argumenty: --config=PATH, --print-config, zbytek = filtr basename ----
-$argsIn      = array_slice($argv, 1);
-$configPath  = null;
-$printConfig = false;
-$positional  = [];
+// ---- Argumenty: --config=PATH, --renderer=mpdf|chrome, --print-config, ----
+// ---- zbytek = filtr basename ---------------------------------------------
+$argsIn           = array_slice($argv, 1);
+$configPath       = null;
+$printConfig      = false;
+$rendererOverride = null;
+$positional       = [];
 foreach ($argsIn as $a) {
     if (preg_match('/^--config=(.+)$/', $a, $m)) {
         $configPath = $m[1];
+    } elseif (preg_match('/^--renderer=(.+)$/', $a, $m)) {
+        $rendererOverride = strtolower(trim($m[1]));
     } elseif ($a === '--print-config') {
         $printConfig = true;
     } else {
@@ -64,6 +69,15 @@ $CFG = require $configPath;
 if (!is_array($CFG)) {
     fwrite(STDERR, "Konfigurace musí vracet pole (return [ ... ];): {$configPath}\n");
     exit(1);
+}
+
+// --renderer= z příkazové řádky přebíjí 'renderer' z configu (mpdf|chrome).
+if ($rendererOverride !== null) {
+    if (!in_array($rendererOverride, ['mpdf', 'chrome'], true)) {
+        fwrite(STDERR, "Neznámý renderer: '{$rendererOverride}' (povolené: mpdf, chrome)\n");
+        exit(1);
+    }
+    $CFG['renderer'] = $rendererOverride;
 }
 
 // ---- Odvozené globální hodnoty -------------------------------------------
@@ -724,7 +738,7 @@ function buildCss(float $tableFontPt, float $codeFontPt): string
     $cf = number_format($codeFontPt, 1);
     return <<<CSS
 body {
-  font-family: "sourcesans", "dejavusans", sans-serif;
+  font-family: "montserrat", "dejavusans", sans-serif;
   font-size: 10.9pt;
   color: #1f2937;
   line-height: 1.55;
@@ -807,7 +821,7 @@ sup.fnref { font-size: 7pt; vertical-align: super; line-height: 0; }
 sup.fnref a { color: #6c5ce7; text-decoration: none; font-weight: 700; }
 
 code {
-  font-family: "cascadiamono", "dejavusansmono", monospace; font-size: 9.2pt;
+  font-family: "jetbrainsmono", monospace; font-size: 9.2pt;
   background: #f3f0ff; border: 0.4pt solid #e0d7fa; border-radius: 2pt;
   padding: 0 3pt; color: #5b21b6;
 }
@@ -861,7 +875,7 @@ pre.code-block {
   background: #1e1e2e; color: #cdd6f4;
   border-radius: 3pt;
   padding: 3.2mm 4mm; margin: 2.8mm 0 4mm 0;
-  font-family: "cascadiamono", "dejavusansmono", monospace; font-size: {$cf}pt;
+  font-family: "jetbrainsmono", monospace; font-size: {$cf}pt;
   line-height: 1.55; page-break-inside: avoid;
   white-space: pre-wrap; overflow-wrap: break-word;
 }
@@ -922,8 +936,8 @@ function computeCodeFontPt(int $maxCodeWidth): float
         return 9.0;
     }
     // Auto-fit JEN na vyžádání: zmenši písmo, aby se nejširší řádek vešel.
-    // 0.62 = kalibrovaný advance Cascadia Mono vč. paddingu (0.59 podhodnocoval
-    // a řádek se i po zmenšení o chlup zalamoval).
+    // 0.62 = kalibrovaný advance JetBrains Mono vč. paddingu (stejná ~0.6em mono
+    // šířka jako dřívější Cascadia; 0.59 podhodnocoval a řádek se zalamoval).
     $pt = (168.0 * 72.0) / (25.4 * 0.62 * $maxCodeWidth);
     return max(6.8, min(9.0, $pt));
 }
@@ -1333,11 +1347,12 @@ HTML;
 
     // ---- CSS pro Chrome: full-bleed titulka, okraje těla řídí puppeteer ----
     $fontsDir = str_replace('\\', '/', $TOOLS_DIR) . '/fonts';
-    $fontFace = '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-Regular.ttf");font-weight:normal;font-style:normal;font-display:block;}'
-        . '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-Bold.ttf");font-weight:bold;font-style:normal;font-display:block;}'
-        . '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-It.ttf");font-weight:normal;font-style:italic;font-display:block;}'
-        . '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-BoldIt.ttf");font-weight:bold;font-style:italic;font-display:block;}'
-        . '@font-face{font-family:"cascadiamono";src:url("file:///' . $fontsDir . '/CascadiaMono.ttf");font-display:block;}'
+    $fontFace = '@font-face{font-family:"montserrat";src:url("file:///' . $fontsDir . '/Montserrat-Regular.ttf");font-weight:normal;font-style:normal;font-display:block;}'
+        . '@font-face{font-family:"montserrat";src:url("file:///' . $fontsDir . '/Montserrat-Bold.ttf");font-weight:bold;font-style:normal;font-display:block;}'
+        . '@font-face{font-family:"montserrat";src:url("file:///' . $fontsDir . '/Montserrat-Italic.ttf");font-weight:normal;font-style:italic;font-display:block;}'
+        . '@font-face{font-family:"montserrat";src:url("file:///' . $fontsDir . '/Montserrat-BoldItalic.ttf");font-weight:bold;font-style:italic;font-display:block;}'
+        . '@font-face{font-family:"jetbrainsmono";src:url("file:///' . $fontsDir . '/JetBrainsMono-Regular.ttf");font-weight:normal;font-display:block;}'
+        . '@font-face{font-family:"jetbrainsmono";src:url("file:///' . $fontsDir . '/JetBrainsMono-Bold.ttf");font-weight:bold;font-display:block;}'
         . '*{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }';
     $coverCss = '@page{ size:A4; margin:0; }'
         // Bleed: band i body mírně přes okraj (overflow:hidden ořízne) — Chrome
@@ -1579,18 +1594,9 @@ function renderDocument(string $mdPath): array
 </div>
 HTML;
 
-    // ---- Obsah (TOC) — jen úroveň H2, ať se vejde na stranu ----
-    $tocH2 = array_values(array_filter($toc, fn ($t) => $t['level'] === 2));
-    $tocHtml = '';
-    if (count($tocH2) >= 4) {
-        $tocTitle = htmlspecialchars($CFG['strings']['toc_title'] ?? 'Obsah', ENT_QUOTES, 'UTF-8');
-        $tocHtml = '<div class="toc"><div class="toc-title">' . $tocTitle . '</div>' . "\n";
-        foreach ($tocH2 as $t) {
-            $txt = applyGlyphSubstitutions(mdInline($t['text']));
-            $tocHtml .= '<div class="toc-h2"><a href="#' . $t['slug'] . '">' . $txt . "</a></div>\n";
-        }
-        $tocHtml .= "</div>\n";
-    }
+    // ---- Obsah (TOC) — jen úroveň H2; nativní mPDF TOC (tečky + čísla stran) ----
+    $tocH2   = array_values(array_filter($toc, fn ($t) => $t['level'] === 2));
+    $showToc = count($tocH2) >= 4;
 
     // ---- mPDF ----
     $tmpDir = sys_get_temp_dir() . '/md2pdf-mpdf';
@@ -1598,23 +1604,27 @@ HTML;
 
     // Vlastní VOLNĚ LICENCOVANÉ fonty z tools/fonts (mPDF je EMBEDUJE do PDF jako
     // subset → dokument vypadá stejně všude; lze legálně šířit i komerčně):
-    //  - Source Sans 3 (text, SIL OFL): humanistický bezpatkový font blízký
-    //    Segoe UI, plná čeština, pravé řezy R/B/I/BI.
-    //  - Cascadia Mono (kód/diagramy, SIL OFL): mPDF bundluje OŘEZANÝ DejaVu Mono
-    //    bez box-drawing znaků (─│┌▼►…) — bral je substitucí z proporcionálního
-    //    fontu a ASCII diagramy se rozjížděly. Cascadia má kompletní sadu v mono šířce.
-    //  - DejaVu (bundlováno v mPDF, volné): záloha pro glyfy mimo Source Sans
-    //    (✓ ✗ ◆ ★ ⚠ ✚ ☑ ∩ …).
+    //  - Montserrat (text, SIL OFL): geometrický bezpatkový brand font, plná
+    //    čeština, pravé řezy R/B/I/BI.
+    //  - JetBrains Mono (kód/diagramy, SIL OFL): monospace s box-drawing znaky
+    //    (─│┌▼►…) — kompletní sada v mono šířce, takže ASCII diagramy drží.
+    //  - DejaVu Sans (bundlováno v mPDF, volné): jediná záloha pro glyfy mimo
+    //    Montserrat (✓ ✗ ◆ ★ ⚠ ✚ ☑ ∩ …). Ostatní DejaVu řezy maže cleanup-mpdf-fonts.php.
     $defCfg   = (new \Mpdf\Config\ConfigVariables())->getDefaults();
     $defFonts = (new \Mpdf\Config\FontVariables())->getDefaults();
-    $fontData = $defFonts['fontdata'];
-    $fontData['sourcesans'] = [
-        'R' => 'SourceSans3-Regular.ttf', 'B' => 'SourceSans3-Bold.ttf',
-        'I' => 'SourceSans3-It.ttf', 'BI' => 'SourceSans3-BoldIt.ttf',
+    // Ponech z defaultní fontdata JEN 'dejavusans'. Ostatní default fonty
+    // (dejavusansmono, dejavusanscondensed, sun-exta…) mažeme přes cleanup-mpdf-fonts.php
+    // → kdyby zůstaly registrované, mPDF by je při substituci zkusil načíst a shodil
+    // render (Cannot find TTF …).
+    $fontData = array_intersect_key($defFonts['fontdata'], ['dejavusans' => 1]);
+    $fontData['montserrat'] = [
+        'R' => 'Montserrat-Regular.ttf', 'B' => 'Montserrat-Bold.ttf',
+        'I' => 'Montserrat-Italic.ttf', 'BI' => 'Montserrat-BoldItalic.ttf',
     ];
-    $fontData['cascadiamono'] = [
-        'R' => 'CascadiaMono.ttf', 'B' => 'CascadiaMono.ttf',
-        'I' => 'CascadiaMono.ttf', 'BI' => 'CascadiaMono.ttf',
+    // JetBrains Mono nemá pravou kurzívu → I/BI mapujeme na R/B.
+    $fontData['jetbrainsmono'] = [
+        'R' => 'JetBrainsMono-Regular.ttf', 'B' => 'JetBrainsMono-Bold.ttf',
+        'I' => 'JetBrainsMono-Regular.ttf', 'BI' => 'JetBrainsMono-Bold.ttf',
     ];
 
     $mpdf = new \Mpdf\Mpdf([
@@ -1627,16 +1637,23 @@ HTML;
         'margin_header'     => 8,
         'margin_footer'     => 9,
         'default_font_size' => 10.3,
-        'default_font'      => 'sourcesans',
+        'default_font'      => 'montserrat',
         'tempDir'           => $tmpDir,
         'autoLangToFont'    => false,
         'autoScriptToLang'  => false,
         'fontDir'           => array_merge($defCfg['fontDir'], [__DIR__ . '/fonts']),
         'fontdata'          => $fontData,
-        // chybějící glyfy (✓ ✗ ◆ ⚠ …) dober ze záložních fontů — Source Sans je nemá;
-        // v kódových blocích se neuplatní (Cascadia má box-drawing kompletní)
+        // Generické CSS rodiny musí mířit na fonty, které v repu ZŮSTÁVAJÍ po
+        // cleanup-mpdf-fonts.php. mPDF defaultně mapuje sans-serif→DejaVuSansCondensed,
+        // monospace→DejaVuSansMono, serif→DejaVuSerif — ty mažeme, takže přemapujeme
+        // na Montserrat / JetBrains Mono / DejaVu Sans.
+        'sans_fonts'        => ['montserrat', 'dejavusans'],
+        'serif_fonts'       => ['dejavusans'],
+        'mono_fonts'        => ['jetbrainsmono', 'dejavusans'],
+        // chybějící glyfy (✓ ✗ ◆ ⚠ …) dober z DejaVu Sans — Montserrat je nemá;
+        // v kódových blocích se neuplatní (JetBrains Mono má box-drawing kompletní).
         'useSubstitutions'  => true,
-        'backupSubsFont'    => ['dejavusans', 'dejavusansmono'],
+        'backupSubsFont'    => ['dejavusans'],
     ]);
 
     $mpdf->SetTitle($title);
@@ -1710,7 +1727,15 @@ HTML;
         'ohvalue' => 1, 'ehvalue' => 1, 'ofvalue' => 1, 'efvalue' => 1,
         'resetpagenum' => 1,
     ]);
-    $mpdf->WriteHTML($tocHtml . $bodyHtml, \Mpdf\HTMLParserMode::HTML_BODY);
+    if ($showToc) {
+        $mpdf->WriteHTML(mpdfTocCss(), \Mpdf\HTMLParserMode::HEADER_CSS);
+        $mpdf->WriteHTML(
+            mpdfNativeTocBody($bodyHtml, $tocH2, (string) ($CFG['strings']['toc_title'] ?? 'Obsah')),
+            \Mpdf\HTMLParserMode::HTML_BODY,
+        );
+    } else {
+        $mpdf->WriteHTML($bodyHtml, \Mpdf\HTMLParserMode::HTML_BODY);
+    }
 
     $outPath = $OUT_DIR . DIRECTORY_SEPARATOR . $base . '.pdf';
     // Render do paměti a zapiš atomicky s retry — Windows občas drží zámek na
@@ -1941,6 +1966,62 @@ function combineTocCss(): string
         . '.toc-h2-sub a { color: #4b5563; text-decoration: none; }';
 }
 
+// ---- NATIVNÍ mPDF TOC (jen mpdf renderer): tečky + čísla stránek -----------
+// CSS pro nativní TOC. mPDF přiřazuje položkám třídy .mpdf_toc_level_N.
+function mpdfTocCss(): string
+{
+    // ⚠️ mPDF má vlastní default styly (vendor/mpdf/mpdf/data/mpdf.css):
+    //     span.mpdf_toc_t_level_0 { font-weight:bold }
+    //     span.mpdf_toc_t_level_1 { font-style:italic; font-weight:bold }
+    // Text položky je v <span class="mpdf_toc_t_level_N"> (uvnitř <a>), takže
+    // přebití tučnosti/italiky MUSÍ cílit přímo na tyto spany — div/a se na text
+    // nedostane. Stejná specificita + pozdější pořadí = naše pravidla vyhrají.
+    return '.toc-title { color:#4c1d95; font-size:17pt; font-weight:700; margin:0 0 5mm 0; }'
+        // úroveň 0 = kapitoly: accent purpurová, tučné
+        . 'div.mpdf_toc_level_0 { margin:1.6mm 0 0.6mm 0; font-size:9.6pt; }'
+        . 'a.mpdf_toc_a { text-decoration:none; }'
+        . 'span.mpdf_toc_t_level_0 { font-weight:bold; font-style:normal; color:#4c1d95; }'
+        . 'span.mpdf_toc_p_level_0 { font-weight:bold; font-style:normal; color:#4c1d95; }'
+        // úroveň 1 = podkapitoly: OBYČEJNÉ, bez italiky a bez tučného
+        . 'div.mpdf_toc_level_1 { margin:0.6mm 0 0.6mm 6mm; font-size:8.8pt; }'
+        . 'span.mpdf_toc_t_level_1 { font-weight:normal; font-style:normal; color:#4b5563; }'
+        . 'span.mpdf_toc_p_level_1 { font-weight:normal; font-style:normal; color:#4b5563; }';
+}
+
+// Sestaví tělo s nativním mPDF TOC: před každý nadpis odpovídající TOC položce
+// vloží <tocentry> a na začátek <tocpagebreak> (mPDF doplní tečky + čísla stránek).
+// Úroveň se normalizuje od nejmenší přítomné (single: H2→0; combine: H1→0, H2→1).
+//
+// @param array<array{level:int,text:string,slug:string}> $entries
+function mpdfNativeTocBody(string $bodyHtml, array $entries, string $tocTitle): string
+{
+    if (!$entries) { return $bodyHtml; }
+    $minLevel = min(array_map(static fn ($t) => (int) $t['level'], $entries));
+    foreach ($entries as $t) {
+        $plain = trim(html_entity_decode(strip_tags(mdInline($t['text'])), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        $plain = htmlspecialchars($plain, ENT_QUOTES, 'UTF-8');
+        $lvl   = max(0, (int) $t['level'] - $minLevel);
+        $entry = '<tocentry content="' . $plain . '" level="' . $lvl . '" />';
+        $bodyHtml = preg_replace(
+            '~(<h[1-6][^>]*\bid="' . preg_quote((string) $t['slug'], '~') . '")~u',
+            $entry . '$1',
+            $bodyHtml,
+            1,
+        );
+    }
+    // toc-preHTML je HTML zakódované do atributu → dvojí escape (mPDF jednou odkóduje).
+    $preInner = "<div class='toc-title'>" . htmlspecialchars($tocTitle, ENT_QUOTES, 'UTF-8') . '</div>';
+    $pre      = htmlspecialchars($preInner, ENT_QUOTES, 'UTF-8');
+    // toc-*-value="-1" → mPDF na stránkách obsahu vynuluje hlavičku i patičku
+    // (HTMLFooter='' v _beginpage) → žádné číslo stránky, žádná patička = čisté
+    // přední listy. Tělo za obsahem si drží vlastní mainhdr/mainftr a číslování
+    // od 1 (nastaveno v AddPageByArray před zápisem těla) → 1..N jen na textu.
+    return '<tocpagebreak'
+        . ' toc-odd-header-value="-1" toc-even-header-value="-1"'
+        . ' toc-odd-footer-value="-1" toc-even-footer-value="-1"'
+        . ' toc-preHTML="' . $pre . '" links="on" />' . $bodyHtml;
+}
+
 // ---- COMBINE: mPDF renderer -------------------------------------------
 function renderCombined(array $files): array
 {
@@ -1989,21 +2070,22 @@ function renderCombined(array $files): array
 </div>
 HTML;
 
-    $tocHtml = combineTocHtml($toc);
-
     $tmpDir = sys_get_temp_dir() . '/md2pdf-mpdf';
     @mkdir($tmpDir, 0775, true);
 
     $defCfg   = (new \Mpdf\Config\ConfigVariables())->getDefaults();
     $defFonts = (new \Mpdf\Config\FontVariables())->getDefaults();
-    $fontData = $defFonts['fontdata'];
-    $fontData['sourcesans'] = [
-        'R' => 'SourceSans3-Regular.ttf', 'B' => 'SourceSans3-Bold.ttf',
-        'I' => 'SourceSans3-It.ttf', 'BI' => 'SourceSans3-BoldIt.ttf',
+    // Ponech jen 'dejavusans' (fallback na symboly) — ostatní default DejaVu/Free
+    // řezy maže cleanup-mpdf-fonts.php; bez prořezu by mPDF zkusil načíst smazaný
+    // soubor při substituci a shodil render.
+    $fontData = array_intersect_key($defFonts['fontdata'], ['dejavusans' => 1]);
+    $fontData['montserrat'] = [
+        'R' => 'Montserrat-Regular.ttf', 'B' => 'Montserrat-Bold.ttf',
+        'I' => 'Montserrat-Italic.ttf', 'BI' => 'Montserrat-BoldItalic.ttf',
     ];
-    $fontData['cascadiamono'] = [
-        'R' => 'CascadiaMono.ttf', 'B' => 'CascadiaMono.ttf',
-        'I' => 'CascadiaMono.ttf', 'BI' => 'CascadiaMono.ttf',
+    $fontData['jetbrainsmono'] = [
+        'R' => 'JetBrainsMono-Regular.ttf', 'B' => 'JetBrainsMono-Bold.ttf',
+        'I' => 'JetBrainsMono-Regular.ttf', 'BI' => 'JetBrainsMono-Bold.ttf',
     ];
 
     $mpdf = new \Mpdf\Mpdf([
@@ -2016,14 +2098,18 @@ HTML;
         'margin_header'     => 8,
         'margin_footer'     => 9,
         'default_font_size' => 10.3,
-        'default_font'      => 'sourcesans',
+        'default_font'      => 'montserrat',
         'tempDir'           => $tmpDir,
         'autoLangToFont'    => false,
         'autoScriptToLang'  => false,
         'fontDir'           => array_merge($defCfg['fontDir'], [__DIR__ . '/fonts']),
         'fontdata'          => $fontData,
+        // Generické rodiny na ponechané fonty (po cleanup-mpdf-fonts.php).
+        'sans_fonts'        => ['montserrat', 'dejavusans'],
+        'serif_fonts'       => ['dejavusans'],
+        'mono_fonts'        => ['jetbrainsmono', 'dejavusans'],
         'useSubstitutions'  => true,
-        'backupSubsFont'    => ['dejavusans', 'dejavusansmono'],
+        'backupSubsFont'    => ['dejavusans'],
     ]);
 
     $title = html_entity_decode($cov['title'], ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -2065,7 +2151,7 @@ HTML;
     $mpdf->DefHTMLFooterByName('mainftr', $footerHtml);
 
     $mpdf->WriteHTML($css, \Mpdf\HTMLParserMode::HEADER_CSS);
-    $mpdf->WriteHTML(combineTocCss(), \Mpdf\HTMLParserMode::HEADER_CSS);
+    $mpdf->WriteHTML(mpdfTocCss(), \Mpdf\HTMLParserMode::HEADER_CSS);
 
     // Titulka full-bleed bez furniture
     $mpdf->WriteHTML('.cover-band{height:297mm;} .cover{page-break-after:auto;}', \Mpdf\HTMLParserMode::HEADER_CSS);
@@ -2080,7 +2166,10 @@ HTML;
         'ohvalue' => 1, 'ehvalue' => 1, 'ofvalue' => 1, 'efvalue' => 1,
         'resetpagenum' => 1,
     ]);
-    $mpdf->WriteHTML($tocHtml . $bodyHtml, \Mpdf\HTMLParserMode::HTML_BODY);
+    $mpdf->WriteHTML(
+        mpdfNativeTocBody($bodyHtml, $toc, (string) ($CFG['strings']['toc_title'] ?? 'Obsah')),
+        \Mpdf\HTMLParserMode::HTML_BODY,
+    );
 
     $outName = (string) ($CFG['combine']['output'] ?? 'combined.pdf');
     $outPath = $OUT_DIR . DIRECTORY_SEPARATOR . $outName;
@@ -2154,11 +2243,12 @@ HTML;
     $tocHtml = combineTocHtml($toc);
 
     $fontsDir = str_replace('\\', '/', $TOOLS_DIR) . '/fonts';
-    $fontFace = '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-Regular.ttf");font-weight:normal;font-style:normal;font-display:block;}'
-        . '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-Bold.ttf");font-weight:bold;font-style:normal;font-display:block;}'
-        . '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-It.ttf");font-weight:normal;font-style:italic;font-display:block;}'
-        . '@font-face{font-family:"sourcesans";src:url("file:///' . $fontsDir . '/SourceSans3-BoldIt.ttf");font-weight:bold;font-style:italic;font-display:block;}'
-        . '@font-face{font-family:"cascadiamono";src:url("file:///' . $fontsDir . '/CascadiaMono.ttf");font-display:block;}'
+    $fontFace = '@font-face{font-family:"montserrat";src:url("file:///' . $fontsDir . '/Montserrat-Regular.ttf");font-weight:normal;font-style:normal;font-display:block;}'
+        . '@font-face{font-family:"montserrat";src:url("file:///' . $fontsDir . '/Montserrat-Bold.ttf");font-weight:bold;font-style:normal;font-display:block;}'
+        . '@font-face{font-family:"montserrat";src:url("file:///' . $fontsDir . '/Montserrat-Italic.ttf");font-weight:normal;font-style:italic;font-display:block;}'
+        . '@font-face{font-family:"montserrat";src:url("file:///' . $fontsDir . '/Montserrat-BoldItalic.ttf");font-weight:bold;font-style:italic;font-display:block;}'
+        . '@font-face{font-family:"jetbrainsmono";src:url("file:///' . $fontsDir . '/JetBrainsMono-Regular.ttf");font-weight:normal;font-display:block;}'
+        . '@font-face{font-family:"jetbrainsmono";src:url("file:///' . $fontsDir . '/JetBrainsMono-Bold.ttf");font-weight:bold;font-display:block;}'
         . '*{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }';
     $coverCss = '@page{ size:A4; margin:0; }'
         . 'html,body{ margin:0; padding:0; width:101%; height:297mm; overflow:hidden; background:#4c1d95; }'

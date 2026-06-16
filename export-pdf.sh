@@ -10,7 +10,10 @@
 #   ./export-pdf.sh --config /path/to/md2pdf.config.php
 #   ./export-pdf.sh --config /path/to/md2pdf.config.php --preview
 #   ./export-pdf.sh --config /path/to/md2pdf.config.php --only DocumentName
+#   ./export-pdf.sh --config /path/to/md2pdf.config.php --renderer chrome
 #
+# --renderer mpdf|chrome overrides the 'renderer' from the config (mpdf = pure
+# PHP; chrome = headless Chrome/Edge + GhostScript, vector mermaid).
 # If --config is omitted, md2pdf.config.php next to this script is used.
 # PHP binary can be overridden via the $PHP env var.
 
@@ -22,22 +25,30 @@ ENGINE="$SCRIPT_DIR/md2pdf.php"
 CONFIG=""
 PREVIEW=0
 ONLY=""
+RENDERER=""
 
 usage() {
-  sed -n '3,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    -c|--config)  CONFIG="${2:-}"; shift 2 ;;
-    --config=*)   CONFIG="${1#*=}"; shift ;;
-    -p|--preview) PREVIEW=1; shift ;;
-    -o|--only)    ONLY="${2:-}"; shift 2 ;;
-    --only=*)     ONLY="${1#*=}"; shift ;;
-    -h|--help)    usage; exit 0 ;;
+    -c|--config)   CONFIG="${2:-}"; shift 2 ;;
+    --config=*)    CONFIG="${1#*=}"; shift ;;
+    -p|--preview)  PREVIEW=1; shift ;;
+    -o|--only)     ONLY="${2:-}"; shift 2 ;;
+    --only=*)      ONLY="${1#*=}"; shift ;;
+    -r|--renderer) RENDERER="${2:-}"; shift 2 ;;
+    --renderer=*)  RENDERER="${1#*=}"; shift ;;
+    -h|--help)     usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
   esac
 done
+
+if [ -n "$RENDERER" ] && [ "$RENDERER" != "mpdf" ] && [ "$RENDERER" != "chrome" ]; then
+  echo "Unknown renderer: '$RENDERER' (allowed: mpdf, chrome)" >&2
+  exit 1
+fi
 
 [ -f "$ENGINE" ] || { echo "Missing $ENGINE" >&2; exit 1; }
 
@@ -74,11 +85,11 @@ echo "Script: $ENGINE"
 echo "Config: $CONFIG"
 echo
 
-if [ -n "$ONLY" ]; then
-  "$PHP" "$ENGINE" --config="$CONFIG" "$ONLY"
-else
-  "$PHP" "$ENGINE" --config="$CONFIG"
-fi
+# Sestav argumenty pres positional params (bezpecne i pod `set -u` na bash 3.2).
+set -- --config="$CONFIG"
+[ -n "$RENDERER" ] && set -- "$@" --renderer="$RENDERER"
+[ -n "$ONLY" ]     && set -- "$@" "$ONLY"
+"$PHP" "$ENGINE" "$@"
 
 # --- Optional: PNG previews (GhostScript) ---------------------------------
 if [ "$PREVIEW" -eq 1 ]; then

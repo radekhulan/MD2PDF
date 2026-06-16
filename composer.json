@@ -8,5 +8,13 @@
     "config": {
         "optimize-autoloader": true,
         "platform-check": false
+    },
+    "scripts": {
+        "post-install-cmd": [
+            "@php cleanup-mpdf-fonts.php"
+        ],
+        "post-update-cmd": [
+            "@php cleanup-mpdf-fonts.php"
+        ]
     }
 }

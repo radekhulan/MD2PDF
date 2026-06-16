@@ -19,16 +19,24 @@
 .PARAMETER Only
     Prevede jen jeden dokument (basename, napr. "MujDokument").
 
+.PARAMETER Renderer
+    Prebije renderer z configu: 'mpdf' (cisty PHP) nebo 'chrome' (headless
+    Chrome/Edge + GhostScript, vektorovy mermaid). Kdyz neni zadan, pouzije se
+    'renderer' z md2pdf.config.php.
+
 .EXAMPLE
     pwsh -File export-pdf.ps1 -Config C:\projekt\tools\md2pdf.config.php
     pwsh -File export-pdf.ps1 -Config ...\md2pdf.config.php -Preview
     pwsh -File export-pdf.ps1 -Config ...\md2pdf.config.php -Only MujDokument
+    pwsh -File export-pdf.ps1 -Config ...\md2pdf.config.php -Renderer chrome
 #>
 [CmdletBinding()]
 param(
     [string]$Config,
     [switch]$Preview,
-    [string]$Only
+    [string]$Only,
+    [ValidateSet('mpdf', 'chrome')]
+    [string]$Renderer
 )
 
 $ErrorActionPreference = 'Stop'
@@ -79,7 +87,8 @@ Write-Host "Config: $Config"
 Write-Host ""
 
 $phpArgs = @($Script, "--config=$Config")
-if ($Only) { $phpArgs += $Only }
+if ($Renderer) { $phpArgs += "--renderer=$Renderer" }
+if ($Only)     { $phpArgs += $Only }
 
 & $Php @phpArgs
 $exit = $LASTEXITCODE
