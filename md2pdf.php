@@ -276,6 +276,8 @@ function mdToHtml(string $md): array
     $paragraph   = [];
     $listStack   = [];           // [['indent'=>int,'type'=>'ul'|'ol'], ...]
     $pendingLi   = false;
+    $liRaw       = null;         // buffer surového MD textu otevřené <li> (inline render až při flush)
+    $liPre       = '';           // prefix HTML uvnitř <li> (např. checkbox span)
     $bqLines     = [];           // surové řádky uvnitř blockquote (callout)
     $inBq        = false;
     $tableRows   = [];
@@ -309,9 +311,20 @@ function mdToHtml(string $md): array
         $paragraph = [];
     };
 
-    $emitLi = function (int $indent, string $type, string $text) use (&$listStack, &$html, &$pendingLi) {
+    // Inline render obsahu <li> se odkládá až sem (přes $liRaw), aby tučný/kurzíva
+    // text mohl přesahovat přes zalomený (soft-wrap) řádek list-itemu. Volá se
+    // VŽDY před zápisem </li> a před otevřením vnořeného seznamu uvnitř <li>.
+    $flushLiContent = function () use (&$html, &$liRaw, &$liPre) {
+        if ($liRaw !== null) {
+            $html .= $liPre . mdInline($liRaw);
+            $liRaw = null;
+            $liPre = '';
+        }
+    };
+
+    $emitLi = function (int $indent, string $type, string $text) use (&$listStack, &$html, &$pendingLi, &$liRaw, &$liPre, $flushLiContent) {
         while ($listStack && end($listStack)['indent'] > $indent) {
-            if ($pendingLi) { $html .= "</li>\n"; $pendingLi = false; }
+            if ($pendingLi) { $flushLiContent(); $html .= "</li>\n"; $pendingLi = false; }
             $top = array_pop($listStack);
             $html .= "</{$top['type']}>\n";
             if ($listStack) { $pendingLi = true; }
@@ -319,30 +332,36 @@ function mdToHtml(string $md): array
         $top = $listStack ? end($listStack) : null;
         if ($top && $top['indent'] === $indent) {
             if ($top['type'] !== $type) {
-                if ($pendingLi) { $html .= "</li>\n"; }
+                if ($pendingLi) { $flushLiContent(); $html .= "</li>\n"; }
                 array_pop($listStack);
                 $html .= "</{$top['type']}>\n<{$type}>\n";
                 $listStack[] = ['indent' => $indent, 'type' => $type];
             } else {
-                if ($pendingLi) { $html .= "</li>\n"; }
+                if ($pendingLi) { $flushLiContent(); $html .= "</li>\n"; }
             }
         } else {
+            // otevírá se nový/hlubší seznam — nejdřív dorenderuj text rodičovské <li>
+            $flushLiContent();
             $html .= "<{$type}>\n";
             $listStack[] = ['indent' => $indent, 'type' => $type];
         }
-        // checkbox list:  - [ ] / - [x]
+        // checkbox list:  - [ ] / - [x]  — obsah se bufferuje, render až při flush
         if (preg_match('/^\[([ xX])\]\s+(.*)$/', $text, $cm)) {
             $box = (strtolower($cm[1]) === 'x') ? '&#9745;' : '&#9744;'; // ☑ / ☐
-            $html .= '  <li class="task"><span class="cb">' . $box . '</span> ' . mdInline($cm[2]);
+            $html .= '  <li class="task"><span class="cb">' . $box . '</span> ';
+            $liPre = '';
+            $liRaw = $cm[2];
         } else {
-            $html .= '  <li>' . mdInline($text);
+            $html .= '  <li>';
+            $liPre = '';
+            $liRaw = $text;
         }
         $pendingLi = true;
     };
 
-    $flushList = function () use (&$listStack, &$html, &$pendingLi) {
+    $flushList = function () use (&$listStack, &$html, &$pendingLi, $flushLiContent) {
         while ($listStack) {
-            if ($pendingLi) { $html .= "</li>\n"; $pendingLi = false; }
+            if ($pendingLi) { $flushLiContent(); $html .= "</li>\n"; $pendingLi = false; }
             $top = array_pop($listStack);
             $html .= "</{$top['type']}>\n";
             $pendingLi = $listStack ? true : false;
@@ -546,9 +565,15 @@ function mdToHtml(string $md): array
             continue;
         }
 
-        // Pokračování list-item (indentovaný text bez bulletu)
+        // Pokračování list-item (indentovaný text bez bulletu) — připoj k bufferu
+        // surového textu <li>, aby inline formátování (tučné/kurzíva/odkaz) mohlo
+        // přesahovat přes zalomený řádek. Fallback na přímý render, kdyby buffer chyběl.
         if ($listStack && $pendingLi && preg_match('/^\s{2,}(\S.*)$/', $line, $m)) {
-            $html .= ' ' . mdInline(trim($m[1]));
+            if ($liRaw !== null) {
+                $liRaw .= ' ' . trim($m[1]);
+            } else {
+                $html .= ' ' . mdInline(trim($m[1]));
+            }
             continue;
         }
 
@@ -854,6 +879,9 @@ table.md-tab th {
   background: #4c1d95; color: #ffffff; font-weight: 700;
   padding: 1.8mm 2.4mm; border: 0.4pt solid #4c1d95; text-align: left;
 }
+/* tučný text v hlavičce tabulky musí zůstat čitelný (jinak fialový strong na
+   fialovém pozadí = neviditelný); zděď bílou barvu z th. */
+table.md-tab th strong, table.md-tab th b { color: #ffffff; }
 table.md-tab td {
   padding: 1.6mm 2.4mm; border: 0.4pt solid #d1d5db; vertical-align: top;
   overflow-wrap: break-word; word-wrap: break-word;
