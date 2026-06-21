@@ -625,6 +625,14 @@ function applyGlyphSubstitutions(string $html): string
     $tip  = htmlspecialchars($CFG['strings']['label_tip']  ?? 'TIP:',  ENT_QUOTES, 'UTF-8');
     $note = htmlspecialchars($CFG['strings']['label_note'] ?? 'POZN:', ENT_QUOTES, 'UTF-8');
     $map = [
+        // Spojovníky/mezery, které primární font (Montserrat) nemá → v mPDF se
+        // vykreslí jako prázdný box (tofu) a navíc rozbijí justifikaci řádku
+        // (zdvojený/přeházený text). Vizuálně bezpečné náhrady; platí pro oba
+        // renderery, takže výstup chrome i mPDF je konzistentní.
+        "\u{2011}" => '-',          // NON-BREAKING HYPHEN (‑) → hyphen-minus
+        "\u{2010}" => '-',          // HYPHEN (‐) → hyphen-minus
+        "\u{00AD}" => '',            // SOFT HYPHEN — odstranit
+        "\u{202F}" => "\u{00A0}",   // NARROW NO-BREAK SPACE → NBSP
         "\u{2705}" => '<span class="g-ok">&#10003;</span>',   // ✅ → ✓ (zeleně)
         "\u{274C}" => '<span class="g-no">&#10007;</span>',   // ❌ → ✗ (červeně)
         "\u{2B50}" => '&#9733;',                              // ⭐ → ★
