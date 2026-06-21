@@ -12,10 +12,12 @@ package-lock.json
 .mermaid-cache/
 pdf/_preview
 
-# Editor / nástroje
+# Editor / nástroje / AI onboarding (interní — odkazují na privátní vault)
 .source/
 .vscode/
 .claude/
+AGENTS.md
+CLAUDE.md
 
 # Lokální / dočasné
 *.tmp
