@@ -412,7 +412,8 @@ function mdToHtml(string $md): array
     };
 
     // ---- hlavní smyčka -------------------------------------------------
-    foreach ($lines as $line) {
+    for ($lineIdx = 0, $lineCnt = count($lines); $lineIdx < $lineCnt; $lineIdx++) {
+        $line = $lines[$lineIdx];
         // Fenced code block — s podporou VNOŘENÝCH plotů dle CommonMark:
         // ````vnejsi blok smí obsahovat ``` vnitřní; zavírá jen plot s >= délkou
         // otevíracího a bez dalšího obsahu na řádku.
@@ -526,8 +527,12 @@ function mdToHtml(string $md): array
             continue;
         }
 
-        // GFM tabulka
-        if (strpos($trim, '|') !== false && substr_count($trim, '|') >= 1) {
+        // GFM tabulka — rozpoznej jen REÁLNOU tabulku, ne řádek, který '|' jen
+        // obsahuje uvnitř textu (např. "read|read_write" v odrážce). Pravidla:
+        //  • oddělovací řádek (---) když už máme header → nastav zarovnání,
+        //  • tělo už otevřené tabulky → další řádek,
+        //  • header řádek → JEN když HNED následuje oddělovací řádek (GFM).
+        if (strpos($trim, '|') !== false) {
             $stripped = preg_replace('/^\||\|$/', '', $trim);
             $cells    = array_map('trim', explode('|', $stripped));
             $isSep    = (count($cells) > 0) && !array_filter($cells, function ($c) {
@@ -543,13 +548,25 @@ function mdToHtml(string $md): array
                 $inTable = true;
                 continue;
             }
-            $flushPara(); $flushList();
-            $tableRows[] = $cells;
-            $inTable = true;
-            continue;
-        } else {
-            if ($inTable) { $flushTable(); }
+            $isTableRow = $inTable;
+            if (!$isTableRow) {   // header je tabulka jen když další řádek je oddělovač
+                $nextTrim = ($lineIdx + 1 < $lineCnt) ? trim($lines[$lineIdx + 1]) : '';
+                if ($nextTrim !== '' && strpos($nextTrim, '|') !== false) {
+                    $nc = array_map('trim', explode('|', preg_replace('/^\||\|$/', '', $nextTrim)));
+                    $isTableRow = ($nc && !array_filter($nc, function ($c) {
+                        return !preg_match('/^:?-{2,}:?$/', $c);
+                    }));
+                }
+            }
+            if ($isTableRow) {
+                $flushPara(); $flushList();
+                $tableRows[] = $cells;
+                $inTable = true;
+                continue;
+            }
+            // jinak: '|' je jen text → propadne na běžné zpracování (list/odstavec)
         }
+        if ($inTable) { $flushTable(); }
 
         // Unordered / nested list
         if (preg_match('/^(\s*)[-*+]\s+(.*)$/', $line, $m)) {
